@@ -124,7 +124,8 @@ local function beside(folder: string, name: string): string?
 
   local lowered = string.lower(name)
 
-  for _, entry in fs.list(folder) or {} do
+  -- A master named without a folder is in the current one.
+  for _, entry in fs.list(if folder == '' then '.' else folder) or {} do
     if string.lower(entry) ~= lowered then continue end
 
     local path = jess.fs.join(folder, entry)
