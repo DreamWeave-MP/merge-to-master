@@ -1,0 +1,7 @@
+--!strict
+--!native
+-- The `merge-to-master` command target's entry: the command line's arguments in, the exit status
+-- out.
+local cli = require '@merge-to-master/cli'
+
+return cli.run { ... }

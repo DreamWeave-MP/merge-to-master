@@ -4,8 +4,15 @@ manifest_version = 1
 id = "org.dreamweave.merge-to-master"
 version = "0.1.0"
 jess_api = "1"
+default_target = "merge-to-master"
 include = ["src"]
-tests = ["tests/run.luau", "tests/merge.luau", "tests/commands.luau", "tests/style.luau"]
+tests = [
+  "tests/run.luau",
+  "tests/merge.luau",
+  "tests/commands.luau",
+  "tests/cli.luau",
+  "tests/style.luau",
+]
 
 [dependencies]
 "org.dreamweave.tes3" = "0.1"
@@ -14,6 +21,7 @@ tests = ["tests/run.luau", "tests/merge.luau", "tests/commands.luau", "tests/sty
 [modules]
 "@merge-to-master" = "src/init.luau"
 "@merge-to-master/commands" = "src/commands.luau"
+"@merge-to-master/cli" = "src/cli.luau"
 
 # Every module here is inert API: it does nothing until something requires it, and runs with the
 # authority of whatever calls it. `@merge-to-master` never touches the filesystem: callers hand it
@@ -23,4 +31,17 @@ tests = ["tests/run.luau", "tests/merge.luau", "tests/commands.luau", "tests/sty
 [[layer]]
 id = "merge-to-master.core"
 requires = ["tes3.core", "tes3conv.core"]
-exports = ["@merge-to-master", "@merge-to-master/commands"]
+exports = ["@merge-to-master", "@merge-to-master/commands", "@merge-to-master/cli"]
+
+# The command line: `src/main.luau` hands its arguments to `@merge-to-master/cli`. A merge checks
+# that its two arguments are files, reads the plugin, the master, and the plugin's other masters
+# from the master's folder, and lists that folder and the backups already kept
+# (filesystem.read); it makes the backup folder, moves the master into it, and writes the merged
+# master and merge_to_master.log (filesystem.write). It reads no environment, runs no other
+# program, and opens no connection.
+
+[targets.merge-to-master]
+kind = "command"
+command = "merge-to-master"
+entry = "src/main.luau"
+capabilities = ["filesystem.read", "filesystem.write"]
