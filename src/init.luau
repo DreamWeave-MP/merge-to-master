@@ -429,7 +429,7 @@ local function nextReferenceIndex(master: PluginData): number
       if reference.mastIndex == 0 then
         local index = reference.refrIndex :: number
 
-        if highest == nil or index > highest then highest = index end
+        if not highest or index > highest then highest = index end
       end
     end
   end
@@ -491,11 +491,11 @@ local function remapTextures(plugin: PluginData, master: PluginData)
     if object.type == 'LandscapeTexture' then
       local index = object.index :: number
 
-      if highest == nil or index > highest then highest = index end
+      if not highest or index > highest then highest = index end
     end
   end
 
-  if highest == nil then return end
+  if not highest then return end
 
   local nextIndex = (highest :: number) + 1
   local remap: { [number]: number } = {}
@@ -600,8 +600,8 @@ local function removeDeleted(data: PluginData)
     local kept = {}
 
     for _, reference in (object.references or {}) :: { Table } do
-      local local_ = reference.mastIndex == 0
-      local gone = local_
+      local ownReference = reference.mastIndex == 0
+      local gone = ownReference
         and (reference.deleted == true or deleted[tes3.lower(reference.id)] == true)
 
       if not gone then table.insert(kept, reference) end
@@ -701,9 +701,9 @@ local function intoRecords(data: PluginData): Records
   end
 
   table.sort(groups, function(left, right)
-    local a, b = journal(left), journal(right)
+    local leftRank, rightRank = journal(left), journal(right)
 
-    if a ~= b then return a < b end
+    if leftRank ~= rightRank then return leftRank < rightRank end
 
     return bytesLess(
       tes3.string((left.dialogue :: Record).id),
