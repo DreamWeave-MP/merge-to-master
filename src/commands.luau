@@ -32,7 +32,9 @@ everything is read and merged and nothing is written or moved: `backup` is where
 would go.
 
 The port's differences from merge_to_master are @merge-to-master's: references and textures are
-numbered, and the log's lines written, in the plugin's order instead of a hash map's.
+numbered, and the log's lines written, in the order of the plugin's records instead of a hash
+map's. A file's records are read as @tes3conv reads them, sorted as tes3conv writes them, so
+that is the order: the same for every file holding those records.
 ]]
 
 local core = require '@tes3'

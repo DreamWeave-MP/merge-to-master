@@ -89,7 +89,8 @@ there. The plugin's other masters are read from <MASTER>'s folder, for their dia
 found there whatever their case. merge_to_master.log is written in the current folder.
 
 merge_to_master numbers the plugin's references and textures, and writes its log's lines, in
-hash-map order, differently each run. This does all three in the plugin's order, every run.
+hash-map order, differently each run. This does all three in the order tes3conv sorts the
+plugin's records, every run.
 
 Exit status: 0 merged; 8 the command line can't be used (merge_to_master exits 2); 9 the merge
 failed (merge_to_master exits 1).]]
