@@ -3,6 +3,7 @@
 -- `merge` on the rest of what its header documents: the masters it is given, the objects, cells,
 -- textures, and dialogue it merges, `removeDeleted`, the order it writes, and its records through
 -- `@tes3conv` into a plugin.
+local bytes = require '@dream/bytes'
 local mergeToMaster = require '@merge-to-master'
 local tes3conv = require '@tes3conv'
 local test = require '@jess/test'
@@ -326,6 +327,31 @@ suite.describe('textures', function()
     expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2' }
     expect(find(merged, 'Landscape').textureIndices.data).toEqual { { 0, 2, 3 }, { 3, 2, 0 } }
     expect(land.textureIndices.data).toEqual { { 0, 1, 2 }, { 2, 1, 0 } }
+  end)
+
+  suite.it('remaps a landscape\'s indices as tes3conv spells them, in base64', function()
+    local master = { header(), texture('Sand', 0), texture('Rock', 1) }
+    local grid = buffer.create(512)
+    buffer.writeu16(grid, 0, 1)
+    buffer.writeu16(grid, 2, 2)
+    buffer.writeu16(grid, 510, 2)
+    local spelled = bytes.toBase64(grid)
+    local land = {
+      type = 'Landscape',
+      flags = '',
+      grid = { 0, 0 },
+      textureIndices = { data = spelled },
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, texture('rock', 0), texture('Grass', 1), land }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local words = bytes.fromBase64(find(merged, 'Landscape').textureIndices.data)
+
+    expect(buffer.len(words)).toBe(512)
+    expect(buffer.readu16(words, 0)).toBe(2)
+    expect(buffer.readu16(words, 2)).toBe(3)
+    expect(buffer.readu16(words, 4)).toBe(0)
+    expect(buffer.readu16(words, 510)).toBe(3)
+    expect(land.textureIndices.data).toBe(spelled)
   end)
 
   suite.it('leaves texture indices alone in a master without textures', function()

@@ -32,6 +32,7 @@ grid after its cell, and journals before the other topics, the others by dialogu
 the order merge_to_master writes them in.
 ]]
 
+local bytes = require '@dream/bytes'
 local tes3 = require '@tes3conv/records'
 
 type Table = tes3.Table
@@ -484,6 +485,38 @@ local function remapMasters(plugin: PluginData, master: PluginData, target: stri
   end
 end
 
+-- A landscape's texture indices with `remap` applied. tes3conv spells the 16 by 16 grid as the
+-- base64 of its 256 little-endian words; rows of numbers are remapped as they are.
+local function remapIndices(data: Value, remap: { [number]: number }): Value
+  if type(data) == 'string' then
+    local words = bytes.fromBase64(data)
+
+    for offset = 0, buffer.len(words) - 2, 2 do
+      local new = remap[buffer.readu16(words, offset)]
+
+      if new then buffer.writeu16(words, offset, new) end
+    end
+
+    return bytes.toBase64(words)
+  end
+
+  local rows = {}
+
+  for row, values in data :: { { number } } do
+    local copied = table.clone(values)
+
+    for column, value in copied do
+      local new = remap[value]
+
+      if new then copied[column] = new end
+    end
+
+    rows[row] = copied
+  end
+
+  return rows
+end
+
 local function remapTextures(plugin: PluginData, master: PluginData)
   local highest: number? = nil
 
@@ -535,24 +568,9 @@ local function remapTextures(plugin: PluginData, master: PluginData)
 
     if not indices then continue end
 
-    local data = indices.data :: { { number } }
-    local rows = {}
-
-    for row, values in data do
-      local copied = table.clone(values)
-
-      for column, value in copied do
-        local new = remap[value]
-
-        if new then copied[column] = new end
-      end
-
-      rows[row] = copied
-    end
-
     local copy = table.clone(land)
     local textures = table.clone(indices)
-    textures.data = rows
+    textures.data = remapIndices(indices.data, remap)
     copy.textureIndices = textures
     plugin.objects[key] = copy
   end
