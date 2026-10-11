@@ -240,6 +240,7 @@ suite.describe('cells', function()
       header(),
       cell('Hall', {}, { waterHeight = 10, mapColor = { 1, 2, 3, 0 }, region = 'Coast' }),
     }
+
     local plugin = {
       header { { 'Master.esm', 1 } },
       cell('HALL', {}, {
@@ -276,6 +277,7 @@ suite.describe('cells', function()
         reference(1, 2, 'rug'),
       }),
     }
+
     local plugin = {
       header { { 'Master.esm', 1 }, { 'Base.esm', 1 } },
       cell('Hall', {
@@ -284,6 +286,7 @@ suite.describe('cells', function()
         reference(0, 1, 'lamp'),
       }),
     }
+
     local merged = mergeToMaster.merge(plugin, master, {
       masterName = 'Master.esm',
       masters = { ['base.esm'] = { header() } },
@@ -459,6 +462,7 @@ suite.describe('order', function()
       texture('Rock', 1),
       texture('Sand', 0),
     }
+
     local plugin = {
       header { { 'Master.esm', 1 } },
       { type = 'MagicEffect', flags = '', effectId = 'WaterBreathing' },
@@ -484,6 +488,7 @@ suite.describe('through tes3conv', function()
       cell('Hall', { reference(0, 1, 'Rock') }),
       dial 'Topic',
     }
+
     local plugin = {
       header { { 'Master.esm', 1 } },
       static('Tree', 'tree.nif'),
