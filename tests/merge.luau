@@ -506,6 +506,108 @@ suite.describe('order', function()
   end)
 end)
 
+suite.describe('summary and log', function()
+  local function sources(): ({ Record }, { Record })
+    local master = {
+      header { { 'Base.esm', 1 } },
+      static 'Rock',
+      static 'Tree',
+      texture('Sand', 0),
+      cell('Hall', {
+        reference(0, 1, 'Rock'),
+        reference(0, 2, 'Tree'),
+        reference(0, 3, 'Lamp', { deleted = true }),
+        reference(1, 4, 'Rock'),
+      }),
+      dial 'Topic',
+      info('I1', '', ''),
+    }
+
+    local plugin = {
+      header { { 'Base.esm', 1 }, { 'Master.esm', 1 } },
+      static('rock', '', 'DELETED'),
+      static 'Bush',
+      texture('Grass', 0),
+      cell('Hall', {}),
+      cell('Wastes', {}, { data = { flags = '', grid = { 2, -3 } } }),
+      dial 'TOPIC',
+      info('I2', 'I1', ''),
+      dial 'Rumors',
+    }
+    return plugin, master
+  end
+
+  local others = { ['base.esm'] = { header(), dial 'Elsewhere', info('B1', '', '') } }
+
+  suite.it('counts what the plugin merged and copied, and nothing of the other masters', function()
+    local plugin, master = sources()
+    local _, summary =
+      mergeToMaster.merge(plugin, master, { masterName = 'Master.esm', masters = others })
+
+    expect(summary).toEqual {
+      merged = 3,
+      copied = 4,
+      texturesRemapped = 1,
+      objectsRemoved = 0,
+      referencesRemoved = 0,
+    }
+  end)
+
+  suite.it('counts what removeDeleted removed', function()
+    local plugin, master = sources()
+    local _, summary = mergeToMaster.merge(
+      plugin,
+      master,
+      { masterName = 'Master.esm', masters = others, removeDeleted = true }
+    )
+
+    expect(summary.objectsRemoved).toBe(1)
+    expect(summary.referencesRemoved).toBe(2)
+  end)
+
+  suite.it('adds merge_to_master\'s log lines to the list it is given, in its own order', function()
+    local plugin, master = sources()
+    local log = { 'Merging plugins...' }
+    mergeToMaster.merge(
+      plugin,
+      master,
+      { masterName = 'Master.esm', masters = others, removeDeleted = true, log = log }
+    )
+
+    expect(log).toEqual {
+      'Merging plugins...',
+      'Remapping texture index: (0 -> 1) Grass',
+      'Merging object to master: STAT rock',
+      'Copying object to master: STAT Bush',
+      'Copying object to master: LTEX Grass',
+      'Merging object to master: CELL Hall',
+      'Copying object to master: CELL Wastes (2, -3)',
+      'Merging object to master: topic',
+      'Copying object to master: rumors',
+      'Removed deleted object: rock',
+      'Removed deleted reference: rock (0, 1) from hall',
+    }
+  end)
+
+  suite.it('writes no line for a merge that has nothing to say', function()
+    local log = {}
+    local merged, summary = mergeToMaster.merge({ header() }, { header() }, {
+      masterName = 'Master.esm',
+      log = log,
+    })
+
+    expect(#merged).toBe(1)
+    expect(log).toEqual {}
+    expect(summary).toEqual {
+      merged = 0,
+      copied = 0,
+      texturesRemapped = 0,
+      objectsRemoved = 0,
+      referencesRemoved = 0,
+    }
+  end)
+end)
+
 suite.describe('through tes3conv', function()
   suite.it('gives records tes3conv writes as a plugin and reads back the same', function()
     local master = {

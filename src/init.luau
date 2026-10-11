@@ -3,7 +3,7 @@
 --[[
 @merge-to-master: Greatness7's merge_to_master, over record lists.
 
-  merge(plugin, master, options) -> records
+  merge(plugin, master, options) -> (records, summary)
 
 Merges `plugin` into `master`, both lists of tes3conv-shaped records with the header first (see
 @tes3conv), and returns the merged master. `options.masterName` is the master's
@@ -11,6 +11,11 @@ file name, as `merge_to_master <plugin> <master>` would see it. `options.masters
 file the plugin names as a master (lowercased) to its records: merge_to_master reads only their
 dialogue, to place the plugin's INFOs in the chain they continue, and drops it afterwards.
 `options.removeDeleted` is `--remove-deleted`.
+
+The summary counts what the merge did. `options.log`, when given, is a list the merge adds a line
+to for each thing merge_to_master writes one to merge_to_master.log for: every texture it
+renumbers, every object and topic it merges or copies, and with `removeDeleted` every object it
+removes and every reference removed with its object.
 
 What it does, as merge_to_master 0.9.5 does it:
   * objects are keyed by type and lowercased id, except that the item, actor, spell, and static
@@ -29,7 +34,8 @@ merge_to_master renumbers references and textures in hash-map order, so two runs
 the same merge differently. This port walks cells and textures in the order the plugin has them,
 which gives every run the same numbers. Cells and path grids come out sorted by name, each path
 grid after its cell, and journals before the other topics, the others by dialogue type and id:
-the order merge_to_master writes them in.
+the order merge_to_master writes them in. Its log lines are in hash-map order too; this port's
+are in the plugin's order, and the master's for what `removeDeleted` removes.
 ]]
 
 local bytes = require '@dream/bytes'
@@ -44,7 +50,21 @@ export type Options = {
   masterName: string,
   masters: { [string]: Records }?,
   removeDeleted: boolean?,
+  log: { string }?,
 }
+
+--- What a merge did. `merged` and `copied` count the plugin's objects and topics: those the
+--- master had already, and those new to it. The last two count what `removeDeleted` removed: the
+--- objects marked deleted, and the master's own references marked deleted or to such an object.
+export type Summary = {
+  merged: number,
+  copied: number,
+  texturesRemapped: number,
+  objectsRemoved: number,
+  referencesRemoved: number,
+}
+
+type Journal = { summary: Summary, log: { string }? }
 
 -- An INFO in a topic's chain: merge_to_master's VecDeque, as a linked list with an index by id.
 type Node = { info: Record, prev: Node?, next: Node? }
@@ -318,8 +338,26 @@ local function mergeCell(plugin: Record, master: Record): Record
   return merged
 end
 
--- `impl MergeInto for PluginData`: `self` into `target`.
-local function mergeInto(source: PluginData, target: PluginData)
+-- merge_to_master logs each object and topic of the plugin's as merged into the master's, or
+-- copied to a master without one: `name` is its tag and id, or the topic's id lowercased.
+local function note(journal: Journal, had: boolean, name: string)
+  local summary = journal.summary
+
+  if had then
+    summary.merged += 1
+  else
+    summary.copied += 1
+  end
+
+  if journal.log then
+    local verb = if had then 'Merging' else 'Copying'
+    table.insert(journal.log, `{verb} object to master: {name}`)
+  end
+end
+
+-- `impl MergeInto for PluginData`: `self` into `target`. Only the plugin's own merge is
+-- journaled: merge_to_master silences its log while it reads the masters.
+local function mergeInto(source: PluginData, target: PluginData, journal: Journal?)
   target.header = source.header
 
   for key, ignored in source.ignored do
@@ -329,6 +367,13 @@ local function mergeInto(source: PluginData, target: PluginData)
   for _, key in source.order do
     local object = source.objects[key]
     local existing = target.objects[key]
+
+    if journal then
+      local name = if journal.log
+        then `{tes3.Tags[object.type :: string]} {tes3.editorId(object)}`
+        else ''
+      note(journal, existing ~= nil, name)
+    end
 
     if existing and object.type == 'Cell' then
       local merged = mergeCell(object, existing)
@@ -344,6 +389,8 @@ local function mergeInto(source: PluginData, target: PluginData)
   for _, key in source.dialogueOrder do
     local group = source.dialogues[key]
     local existing = target.dialogues[key]
+
+    if journal then note(journal, existing ~= nil, key) end
 
     if not existing then
       -- A topic the target doesn't have is moved over whole, chain and all.
@@ -517,7 +564,7 @@ local function remapIndices(data: Value, remap: { [number]: number }): Value
   return rows
 end
 
-local function remapTextures(plugin: PluginData, master: PluginData)
+local function remapTextures(plugin: PluginData, master: PluginData, journal: Journal)
   local highest: number? = nil
 
   for _, object in master.objects do
@@ -554,6 +601,12 @@ local function remapTextures(plugin: PluginData, master: PluginData)
       copy.index = new
       plugin.objects[key] = copy
       remap[old + 1] = new + 1
+      journal.summary.texturesRemapped += 1
+
+      if journal.log then
+        local id = tes3.string(texture.id)
+        table.insert(journal.log, `Remapping texture index: ({old} -> {new}) {id}`)
+      end
     end
   end
 
@@ -602,27 +655,49 @@ local function removeIgnored(data: PluginData)
   end
 end
 
-local function removeDeleted(data: PluginData)
+-- merge_to_master's `remove_deleted`. It logs each object it removes, and each reference removed
+-- because its object was: one marked deleted itself goes without a line.
+local function removeDeleted(data: PluginData, journal: Journal)
   local deleted: { [string]: boolean } = {}
+  local summary, log = journal.summary, journal.log
 
-  for key, object in data.objects do
-    if tes3.isDeleted(object) then
-      data.objects[key] = nil
-      deleted[string.lower(tes3.editorId(object))] = true
-    end
+  for _, key in data.order do
+    local object = data.objects[key]
+
+    if not object or not tes3.isDeleted(object) then continue end
+
+    local id = string.lower(tes3.editorId(object))
+    data.objects[key] = nil
+    deleted[id] = true
+    summary.objectsRemoved += 1
+
+    if log then table.insert(log, `Removed deleted object: {id}`) end
   end
 
-  for key, object in data.objects do
-    if object.type ~= 'Cell' then continue end
+  for _, key in data.order do
+    local object = data.objects[key]
+
+    if not object or object.type ~= 'Cell' then continue end
 
     local kept = {}
 
     for _, reference in (object.references or {}) :: { Table } do
       local ownReference = reference.mastIndex == 0
-      local gone = ownReference
-        and (reference.deleted == true or deleted[tes3.lower(reference.id)] == true)
+      local marked = ownReference and reference.deleted == true
+      local orphaned = ownReference and not marked and deleted[tes3.lower(reference.id)] == true
 
-      if not gone then table.insert(kept, reference) end
+      if not marked and not orphaned then
+        table.insert(kept, reference)
+        continue
+      end
+
+      summary.referencesRemoved += 1
+
+      if orphaned and log then
+        local id, cell = tes3.lower(reference.id), string.lower(tes3.editorId(object))
+        local indices = `({reference.mastIndex}, {reference.refrIndex})`
+        table.insert(log, `Removed deleted reference: {id} {indices} from {cell}`)
+      end
     end
 
     local copy = table.clone(object)
@@ -743,8 +818,22 @@ local function intoRecords(data: PluginData): Records
   return records
 end
 
-function mergeToMaster.merge(plugin: Records, master: Records, options: Options): Records
+function mergeToMaster.merge(
+  plugin: Records,
+  master: Records,
+  options: Options
+): (Records, Summary)
   local target = options.masterName
+  local journal: Journal = {
+    summary = {
+      merged = 0,
+      copied = 0,
+      texturesRemapped = 0,
+      objectsRemoved = 0,
+      referencesRemoved = 0,
+    },
+    log = options.log,
+  }
   local pluginData = collect(plugin)
   local pluginMasters = (pluginData.header.masters or {}) :: { Master }
   local present = false
@@ -790,13 +879,13 @@ function mergeToMaster.merge(plugin: Records, master: Records, options: Options)
 
   merged.header = header or {}
   remapMasters(pluginData, merged, target)
-  remapTextures(pluginData, merged)
-  mergeInto(pluginData, merged)
+  remapTextures(pluginData, merged, journal)
+  mergeInto(pluginData, merged, journal)
   removeIgnored(merged)
 
-  if options.removeDeleted then removeDeleted(merged) end
+  if options.removeDeleted then removeDeleted(merged, journal) end
 
-  return intoRecords(merged)
+  return intoRecords(merged), journal.summary
 end
 
 return mergeToMaster
