@@ -1,0 +1,507 @@
+--!strict
+--!native
+-- `@merge-to-master/commands`: merge_to_master's own scenarios (references merged, INFOs placed
+-- at the front, middle, and end of a chain and across the gaps another master fills, textures
+-- remapped, deleted objects removed), and what it does around a merge (the backup, the other
+-- masters, the log), each as a request handed over and a result looked at. Nothing is captured,
+-- because nothing prints: what the command merged, wrote, or couldn't do is in the table it
+-- returns.
+local bytes = require '@dream/bytes'
+local commands = require '@merge-to-master/commands'
+local support = require './support'
+local test = require '@jess/test'
+
+local expect = test.expect
+local suite = test.new()
+
+local header, static, cell, reference = support.header, support.static, support.cell, support.reference
+local dial, info, texture = support.dial, support.info, support.texture
+
+--- Whether two files hold the same bytes; a digest says so without handing bytes to `expect`.
+local function same(left: string, right: string): boolean
+  return bytes.sha256(support.bytes(left)) == bytes.sha256(support.bytes(right))
+end
+
+--- A copy of the file `path`, to hold the next to it after something writes over it.
+local function kept(path: string): string
+  local copy = `{path}.kept`
+  jess.fs.copy(path, copy)
+  return copy
+end
+
+suite.describe('merge', function()
+  suite.it('writes the merge over the master, its header counting the records', function()
+    local folder = support.folder 'commands-merge'
+    local plugin, master = support.pair(folder)
+    local result = commands.merge { plugin = plugin, master = master }
+
+    expect(result.command).toBe 'merge'
+    expect(result.outcome).toBe 'merged'
+    expect(result.plugin).toBe(plugin)
+    expect(result.master).toBe(master)
+    expect(result.dryRun).toBe(false)
+    expect(result.written).toBe(true)
+    expect(result.masters).toEqual {}
+    expect(result.missing).toEqual {}
+    expect(result.records).toEqual { plugin = 5, master = 5, merged = 7 }
+    expect(result.summary).toEqual {
+      merged = 3,
+      copied = 1,
+      texturesRemapped = 0,
+      objectsRemoved = 0,
+      referencesRemoved = 0,
+    }
+
+    local merged = support.read(master)
+    expect(support.labels(merged)).toEqual {
+      'Static:Tree',
+      'Static:rock',
+      'Cell:Hall',
+      'Dialogue:Topic',
+      'DialogueInfo:I1',
+      'DialogueInfo:I3',
+      'DialogueInfo:I2',
+    }
+    expect(merged[1].numObjects).toBe(7)
+    expect(merged[1].fileType).toBe 'Esm'
+    expect(merged[1].author).toBe 'theirs'
+    expect(merged[1].masters).toEqual {}
+    expect(support.find(merged, 'Static', 'rock').mesh).toBe 'boulder.nif'
+  end)
+
+  suite.it('merges references: the master\'s replaced at its index, the plugin\'s own numbered on', function()
+    local folder = support.folder 'commands-references'
+    local plugin, master = support.pair(folder)
+    commands.merge { plugin = plugin, master = master }
+
+    local hall = support.find(support.read(master), 'Cell', 'Hall')
+    expect(support.placed(hall)).toEqual { Rock = '0:41', Tree = '0:42' }
+
+    for _, item in hall.references do
+      if item.id == 'Rock' then expect(item.translation).toEqual { 1, 2, 3 } end
+    end
+  end)
+
+  suite.it('places an INFO in the middle of the master\'s chain, and relinks its neighbours', function()
+    local folder = support.folder 'commands-info-middle'
+    local plugin, master = support.pair(folder)
+    commands.merge { plugin = plugin, master = master }
+    expect(support.chain(support.read(master))).toEqual { 'I1<|I3>', 'I3<I1|I2>', 'I2<I3|>' }
+  end)
+
+  suite.it('places INFOs at the front and the end of a chain, and in a topic without any', function()
+    local folder = support.folder 'commands-info-ends'
+    local master = support.write(folder, 'Master.esm', {
+      header({}, { fileType = 'Esm' }),
+      dial 'Empty',
+      dial 'Topic',
+      info('I1', '', 'I2'),
+      info('I2', 'I1', 'I3'),
+      info('I3', 'I2', ''),
+    })
+
+    local plugin = support.write(folder, 'Plugin.esp', {
+      header { { 'Master.esm', 1 } },
+      dial 'Empty',
+      info('E1', '', ''),
+      dial 'Topic',
+      info('I0', '', 'I1'),
+      info('I4', 'I3', ''),
+    })
+    commands.merge { plugin = plugin, master = master }
+
+    expect(support.chain(support.read(master))).toEqual {
+      'E1<|>',
+      'I0<|I1>',
+      'I1<I0|I2>',
+      'I2<I1|I3>',
+      'I3<I2|I4>',
+      'I4<I3|>',
+    }
+  end)
+
+  suite.it('replaces an INFO the master has where it is', function()
+    local folder = support.folder 'commands-info-replacing'
+    local master = support.write(folder, 'Master.esm', {
+      header({}, { fileType = 'Esm' }),
+      dial 'Topic',
+      info('I1', '', 'I2'),
+      info('I2', 'I1', 'I3'),
+      info('I3', 'I2', ''),
+    })
+    local replacement = info('I2', 'I1', 'I3')
+    replacement.text = 'said anew'
+    local plugin =
+      support.write(folder, 'Plugin.esp', { header { { 'Master.esm', 1 } }, dial 'Topic', replacement })
+    commands.merge { plugin = plugin, master = master }
+
+    local merged = support.read(master)
+    expect(support.chain(merged)).toEqual { 'I1<|I2>', 'I2<I1|I3>', 'I3<I2|>' }
+    expect(support.find(merged, 'DialogueInfo', 'I2').text).toBe 'said anew'
+  end)
+
+  suite.it('renumbers the plugin\'s textures after the master\'s, in its landscape too', function()
+    local folder = support.folder 'commands-textures'
+    local master = support.write(folder, 'Master.esm', {
+      header({}, { fileType = 'Esm' }),
+      texture('Sand', 0),
+      texture('Rock', 1),
+    })
+    local grid = buffer.create(512)
+    buffer.writeu16(grid, 0, 1)
+    buffer.writeu16(grid, 2, 2)
+    buffer.writeu16(grid, 510, 2)
+    local land = {
+      type = 'Landscape',
+      flags = '',
+      grid = { 0, 0 },
+      landscapeFlags = 'USES_TEXTURES',
+      textureIndices = { data = bytes.toBase64(grid) },
+    }
+
+    local plugin = support.write(folder, 'Plugin.esp', {
+      header { { 'Master.esm', 1 } },
+      texture('rock', 0),
+      texture('Grass', 1),
+      land,
+    })
+    local result = commands.merge { plugin = plugin, master = master }
+    expect(result.summary and result.summary.texturesRemapped).toBe(2)
+
+    local merged = support.read(master)
+    local indices = {}
+
+    for _, record in merged do
+      if record.type == 'LandscapeTexture' then table.insert(indices, `{record.id}={record.index}`) end
+    end
+
+    expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2' }
+    local words = bytes.fromBase64(support.find(merged, 'Landscape').textureIndices.data)
+    expect(buffer.readu16(words, 0)).toBe(2)
+    expect(buffer.readu16(words, 2)).toBe(3)
+    expect(buffer.readu16(words, 4)).toBe(0)
+    expect(buffer.readu16(words, 510)).toBe(3)
+  end)
+
+  suite.it('takes a plugin that doesn\'t name the master as one made on it', function()
+    local folder = support.folder 'commands-unnamed-master'
+    local master = support.write(folder, 'Master.esm', { header({}, { fileType = 'Esm' }), static 'Rock' })
+    local plugin = support.write(folder, 'Plugin.esp', { header(), static 'Tree' })
+    local result = commands.merge { plugin = plugin, master = master }
+
+    expect(result.outcome).toBe 'merged'
+    expect(support.labels(support.read(master))).toEqual { 'Static:Rock', 'Static:Tree' }
+  end)
+
+  suite.it('raises for a plugin or a master that isn\'t a file, or isn\'t a plugin', function()
+    local folder = support.folder 'commands-unreadable'
+    local plugin, master = support.pair(folder)
+    local missing = jess.fs.join(folder, 'Nothing.esp')
+    local text = jess.fs.join(folder, 'Notes.esp')
+    jess.fs.write(text, 'not a plugin at all', { backup = false })
+    local before = kept(master)
+
+    expect(function() commands.merge { plugin = missing, master = master } end).toThrow(
+      `the plugin '{missing}' isn't a file`
+    )
+    expect(function() commands.merge { plugin = plugin, master = folder } end).toThrow(
+      `the master '{folder}' isn't a file`
+    )
+    expect(function() commands.merge { plugin = text, master = master } end).toThrow()
+    expect(same(master, before)).toBe(true)
+    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+  end)
+end)
+
+suite.describe('removeDeleted', function()
+  local function sources(folder: string): (string, string)
+    local master = support.write(folder, 'Master.esm', {
+      header({}, { fileType = 'Esm' }),
+      static 'Rock',
+      static 'Tree',
+      cell('Hall', {
+        reference(0, 1, 'Rock'),
+        reference(0, 2, 'Tree'),
+        reference(0, 3, 'Lamp', { deleted = true }),
+      }),
+    })
+
+    local plugin = support.write(folder, 'Plugin.esp', {
+      header { { 'Master.esm', 1 } },
+      static('rock', '', 'DELETED'),
+    })
+    return plugin, master
+  end
+
+  suite.it('keeps deleted objects and references without it', function()
+    local plugin, master = sources(support.folder 'commands-deleted-kept')
+    local result = commands.merge { plugin = plugin, master = master }
+    local merged = support.read(master)
+
+    expect(support.labels(merged)).toEqual { 'Static:Tree', 'Static:rock', 'Cell:Hall' }
+    expect(#support.find(merged, 'Cell').references).toBe(3)
+    expect(result.summary and result.summary.objectsRemoved).toBe(0)
+  end)
+
+  suite.it('removes them with it, and says how many', function()
+    local plugin, master = sources(support.folder 'commands-deleted-removed')
+    local result = commands.merge { plugin = plugin, master = master, removeDeleted = true }
+    local merged = support.read(master)
+
+    expect(support.labels(merged)).toEqual { 'Static:Tree', 'Cell:Hall' }
+    expect(support.placed(support.find(merged, 'Cell'))).toEqual { Tree = '0:2' }
+    expect(merged[1].numObjects).toBe(2)
+    expect(result.records).toEqual { plugin = 1, master = 3, merged = 2 }
+    expect(result.summary and result.summary.objectsRemoved).toBe(1)
+    expect(result.summary and result.summary.referencesRemoved).toBe(2)
+    expect(result.log).toContain 'Removed deleted object: rock'
+    expect(result.log).toContain 'Removed deleted reference: rock (0, 1) from hall'
+  end)
+end)
+
+suite.describe('the backup', function()
+  suite.it('moves the master to backups/merge_to_master beside it, numbered from 000', function()
+    local folder = support.folder 'commands-backup'
+    local plugin, master = support.pair(folder)
+    local before = kept(master)
+    local backup = jess.fs.join(folder, 'backups', 'merge_to_master', 'Master.000.esm')
+    local result = commands.merge { plugin = plugin, master = master }
+
+    expect(result.backup).toBe(backup)
+    expect(result.backupProblem).toBeNil()
+    expect(same(backup, before)).toBe(true)
+    expect(same(master, before)).toBe(false)
+  end)
+
+  suite.it('numbers each backup after the last, so every merge can be undone', function()
+    local folder = support.folder 'commands-backup-again'
+    local plugin, master = support.pair(folder)
+    commands.merge { plugin = plugin, master = master }
+    local once = kept(master)
+    local result = commands.merge { plugin = plugin, master = master }
+    local backup = jess.fs.join(folder, 'backups', 'merge_to_master', 'Master.001.esm')
+
+    expect(result.backup).toBe(backup)
+    expect(same(backup, once)).toBe(true)
+  end)
+
+  suite.it('numbers after the highest backup of that name, whatever else is there', function()
+    local folder = support.folder 'commands-backup-highest'
+    local plugin, master = support.pair(folder)
+    local backups = jess.fs.join(folder, 'backups', 'merge_to_master')
+
+    for _, name in { 'Master.108.esm', 'Master.7.esm', 'Other.500.esm', 'Master.999.esp', 'Master.x.esm' } do
+      jess.fs.write(jess.fs.join(backups, name), 'kept', { backup = false })
+    end
+
+    local result = commands.merge { plugin = plugin, master = master }
+    expect(result.backup).toBe(jess.fs.join(backups, 'Master.109.esm'))
+    expect(jess.fs.isFile(jess.fs.join(backups, 'Master.109.esm'))).toBe(true)
+    expect(support.bytes(jess.fs.join(backups, 'Master.108.esm'))).toBe 'kept'
+  end)
+
+  suite.it('keeps none with overwrite, and makes no folder for one', function()
+    local folder = support.folder 'commands-overwrite'
+    local plugin, master = support.pair(folder)
+    local result = commands.merge { plugin = plugin, master = master, overwrite = true }
+
+    expect(result.outcome).toBe 'merged'
+    expect(result.written).toBe(true)
+    expect(result.backup).toBeNil()
+    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+    expect(#support.read(master)).toBe(8)
+  end)
+
+  suite.it('leaves a master without an extension as it was, and says it couldn\'t back it up', function()
+    local folder = support.folder 'commands-backup-failed'
+    local bare = support.write(folder, 'Master', { header({}, { fileType = 'Esm' }), static 'Rock' })
+    local plugin = support.write(folder, 'Plugin.esp', { header(), static 'Tree' })
+    local before = kept(bare)
+    local result = commands.merge { plugin = plugin, master = bare }
+
+    expect(result.outcome).toBe 'backupFailed'
+    expect(result.written).toBe(false)
+    expect(result.backup).toBeNil()
+    expect(result.backupProblem).toBe(`'{bare}' has no extension to number a backup before`)
+    expect(same(bare, before)).toBe(true)
+    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+
+    local overwritten = commands.merge { plugin = plugin, master = bare, overwrite = true }
+    expect(overwritten.outcome).toBe 'merged'
+    expect(same(bare, before)).toBe(false)
+  end)
+end)
+
+suite.describe('the plugin\'s other masters', function()
+  local function sources(folder: string, base: string?): (string, string)
+    if base then
+      support.write(folder, base, {
+        header({}, { fileType = 'Esm' }),
+        static 'Pillar',
+        dial('Greeting 0', 'Greeting'),
+        info('B1', '', 'B2'),
+        info('B2', 'B1', 'B3'),
+        info('B3', 'B2', ''),
+      })
+    end
+
+    local master = support.write(folder, 'Master.esm', {
+      header({ { 'Base.esm', 1 } }, { fileType = 'Esm' }),
+      dial('Greeting 0', 'Greeting'),
+      info('M1', 'B1', 'B2'),
+    })
+
+    local plugin = support.write(folder, 'Plugin.esp', {
+      header { { 'Base.esm', 1 }, { 'Master.esm', 1 } },
+      dial('Greeting 0', 'Greeting'),
+      info('P1', 'B2', 'B3'),
+    })
+    return plugin, master
+  end
+
+  suite.it('reads them from the master\'s folder, and keeps only the gaps their dialogue fills', function()
+    local folder = support.folder 'commands-other-masters'
+    local plugin, master = sources(folder, 'Base.esm')
+    local result = commands.merge { plugin = plugin, master = master }
+
+    expect(result.outcome).toBe 'merged'
+    expect(result.masters).toEqual { { name = 'Base.esm', path = jess.fs.join(folder, 'Base.esm') } }
+    expect(result.missing).toEqual {}
+
+    local merged = support.read(master)
+    expect(support.labels(merged)).toEqual {
+      'Dialogue:Greeting 0',
+      'DialogueInfo:M1',
+      'DialogueInfo:P1',
+    }
+    expect(support.chain(merged)).toEqual { 'M1<B1|B2>', 'P1<B2|B3>' }
+    expect(merged[1].masters[1][1]).toBe 'Base.esm'
+  end)
+
+  suite.it('finds one whose file is spelled in another case', function()
+    local folder = support.folder 'commands-other-masters-case'
+    local plugin, master = sources(folder, 'BASE.ESM')
+    local result = commands.merge { plugin = plugin, master = master }
+
+    -- A filesystem that ignores case finds it under the plugin's spelling.
+    expect(result.outcome).toBe 'merged'
+    expect(#result.masters).toBe(1)
+    expect(result.masters[1].name).toBe 'Base.esm'
+    expect(string.lower(result.masters[1].path)).toBe(string.lower(jess.fs.join(folder, 'Base.esm')))
+  end)
+
+  suite.it('names the ones that aren\'t there, and merges and writes nothing', function()
+    local folder = support.folder 'commands-other-masters-missing'
+    local plugin, master = sources(folder, nil)
+    local before = kept(master)
+    local result = commands.merge { plugin = plugin, master = master }
+
+    expect(result.outcome).toBe 'missingMasters'
+    expect(result.missing).toEqual { 'Base.esm' }
+    expect(result.masters).toEqual {}
+    expect(result.written).toBe(false)
+    expect(result.backup).toBeNil()
+    expect(result.records).toBeNil()
+    expect(result.summary).toBeNil()
+    expect(same(master, before)).toBe(true)
+    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+  end)
+end)
+
+suite.describe('a dry run', function()
+  suite.it('merges and counts, says where the backup would go, and writes nothing', function()
+    local folder = support.folder 'commands-dry-run'
+    local plugin, master = support.pair(folder)
+    local before = kept(master)
+    local log = jess.fs.join(folder, 'merge.log')
+    local result = commands.merge { plugin = plugin, master = master, dryRun = true, log = log }
+
+    expect(result.outcome).toBe 'merged'
+    expect(result.dryRun).toBe(true)
+    expect(result.written).toBe(false)
+    expect(result.backup).toBe(jess.fs.join(folder, 'backups', 'merge_to_master', 'Master.000.esm'))
+    expect(result.records).toEqual { plugin = 5, master = 5, merged = 7 }
+    expect(result.summary and result.summary.merged).toBe(3)
+    expect(result.logFile).toBeNil()
+    expect(same(master, before)).toBe(true)
+    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+    expect(jess.fs.exists(log)).toBe(false)
+    expect(result.log).toEqual {
+      'Merging plugins...',
+      'Copying object to master: STAT Tree',
+      'Merging object to master: STAT rock',
+      'Merging object to master: CELL Hall',
+      'Merging object to master: topic',
+    }
+  end)
+
+  suite.it('says a backup couldn\'t be made, as the run would', function()
+    local folder = support.folder 'commands-dry-run-backup'
+    local bare = support.write(folder, 'Master', { header({}, { fileType = 'Esm' }), static 'Rock' })
+    local plugin = support.write(folder, 'Plugin.esp', { header(), static 'Tree' })
+    local result = commands.merge { plugin = plugin, master = bare, dryRun = true }
+
+    expect(result.outcome).toBe 'backupFailed'
+    expect(result.dryRun).toBe(true)
+  end)
+end)
+
+suite.describe('the log', function()
+  suite.it('is merge_to_master.log\'s lines, and written to the file the request names', function()
+    local folder = support.folder 'commands-log'
+    local plugin, master = support.pair(folder)
+    local log = jess.fs.join(folder, 'merge_to_master.log')
+    jess.fs.write(log, 'the log of the run before\n', { backup = false })
+    local backups = jess.fs.join(folder, 'backups', 'merge_to_master')
+    local result = commands.merge { plugin = plugin, master = master, log = log }
+
+    expect(result.logFile).toBe(log)
+    expect(result.log).toEqual {
+      'Merging plugins...',
+      'Copying object to master: STAT Tree',
+      'Merging object to master: STAT rock',
+      'Merging object to master: CELL Hall',
+      'Merging object to master: topic',
+      'Creating backup...',
+      `Creating backup directory: {backups}`,
+      'Finding next available backup file name...',
+      `Creating backup file: {jess.fs.join(backups, 'Master.000.esm')}`,
+      'Saving results...',
+      'Finished!',
+    }
+    expect(support.bytes(log)).toBe(table.concat(result.log, '\n') .. '\n')
+  end)
+
+  suite.it('is written to no file without one named, and still returned', function()
+    local folder = support.folder 'commands-log-unnamed'
+    local plugin, master = support.pair(folder)
+    local result = commands.merge { plugin = plugin, master = master, overwrite = true }
+
+    expect(result.logFile).toBeNil()
+    expect(result.log[1]).toBe 'Merging plugins...'
+    expect(result.log[#result.log - 2]).toBe 'Creating backup...'
+    expect(result.log[#result.log - 1]).toBe 'Saving results...'
+    expect(result.log[#result.log]).toBe 'Finished!'
+
+    for _, name in jess.fs.list(folder) do
+      expect(string.find(name, '%.log$')).toBeNil()
+    end
+  end)
+
+  suite.it('goes as far as a merge that stopped for a missing master', function()
+    local folder = support.folder 'commands-log-missing'
+    local master = support.write(folder, 'Master.esm', { header({}, { fileType = 'Esm' }) })
+    local plugin = support.write(folder, 'Plugin.esp', {
+      header { { 'Gone.esm', 1 }, { 'Master.esm', 1 } },
+      static 'Tree',
+    })
+    local log = jess.fs.join(folder, 'merge_to_master.log')
+    local result = commands.merge { plugin = plugin, master = master, log = log }
+
+    expect(result.outcome).toBe 'missingMasters'
+    expect(result.log).toEqual { 'Merging plugins...' }
+    expect(support.bytes(log)).toBe 'Merging plugins...\n'
+  end)
+end)
+
+return suite
