@@ -113,14 +113,15 @@ local SharedKeys: { [string]: boolean } = {
   Weapon = true,
 }
 
--- What an object is kept under: its lowercased id, after its type's tag unless its family shares
--- its ids. A tag starts with a capital and a lowercased id with none, so the two never meet.
+-- What an object is kept under. The keys are also what orders a walk over a file's objects,
+-- which the highest texture of a master whose indices aren't all numbers depends on: a shorter
+-- key for the shared families would be met in another order.
 local function objectKey(record: Record): string?
   local id = string.lower(tes3.editorId(record))
 
   if id == '' then return nil end
 
-  if SharedKeys[record.type :: string] then return id end
+  if SharedKeys[record.type :: string] then return '\0' .. id end
 
   return tes3.Tags[record.type :: string] .. id
 end
