@@ -997,8 +997,9 @@ function mergeToMaster.merge(
     pluginMasters = masters
   end
 
-  -- merge_masters: the target whole, every other master's dialogue as ignored context.
-  local merged = newData()
+  -- merge_masters: the target whole, every other master's dialogue as ignored context. The first
+  -- of them merged into nothing is itself, so the rest are merged into it.
+  local merged: PluginData? = nil
   local header: Record? = nil
 
   for _, entry in pluginMasters do
@@ -1017,18 +1018,23 @@ function mergeToMaster.merge(
       setAllIgnored(data)
     end
 
-    mergeInto(data, merged)
+    if merged then
+      mergeInto(data, merged)
+    else
+      merged = data
+    end
   end
 
-  merged.header = header or {}
-  remapMasters(pluginData, merged, target)
-  remapTextures(pluginData, merged, journal)
-  mergeInto(pluginData, merged, journal)
-  removeIgnored(merged)
+  local whole = merged or newData()
+  whole.header = header or {}
+  remapMasters(pluginData, whole, target)
+  remapTextures(pluginData, whole, journal)
+  mergeInto(pluginData, whole, journal)
+  removeIgnored(whole)
 
-  if options.removeDeleted then removeDeleted(merged, journal) end
+  if options.removeDeleted then removeDeleted(whole, journal) end
 
-  return intoRecords(merged), journal.summary
+  return intoRecords(whole), journal.summary
 end
 
 return mergeToMaster
