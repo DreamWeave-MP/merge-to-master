@@ -75,6 +75,10 @@ type PluginData = {
   header: Record,
   objects: { [string]: Record },
   order: { string },
+  -- Those of `order` that are cells, and those that are textures, in its order: what the passes
+  -- over a file's references and its texture indices read, without the rest.
+  cells: { string },
+  textures: { string },
   dialogues: { [string]: Group },
   dialogueOrder: { string },
   ignored: { [Record]: boolean },
@@ -242,7 +246,16 @@ local function repairLinks(group: Group, ignored: { [Record]: boolean })
 end
 
 local function newData(): PluginData
-  return { header = {}, objects = {}, order = {}, dialogues = {}, dialogueOrder = {}, ignored = {} }
+  return {
+    header = {},
+    objects = {},
+    order = {},
+    cells = {},
+    textures = {},
+    dialogues = {},
+    dialogueOrder = {},
+    ignored = {},
+  }
 end
 
 local function addDialogue(data: PluginData, key: string): Group
@@ -258,7 +271,15 @@ local function addDialogue(data: PluginData, key: string): Group
 end
 
 local function setObject(data: PluginData, key: string, record: Record)
-  if data.objects[key] == nil then table.insert(data.order, key) end
+  if data.objects[key] == nil then
+    table.insert(data.order, key)
+
+    if record.type == 'Cell' then
+      table.insert(data.cells, key)
+    elseif record.type == 'LandscapeTexture' then
+      table.insert(data.textures, key)
+    end
+  end
 
   data.objects[key] = record
 end
@@ -519,12 +540,8 @@ end
 local function nextReferenceIndex(master: PluginData): number
   local highest: number? = nil
 
-  for _, key in master.order do
-    local object = master.objects[key]
-
-    if object.type ~= 'Cell' then continue end
-
-    for _, reference in (object.references or {}) :: { Table } do
+  for _, key in master.cells do
+    for _, reference in (master.objects[key].references or {}) :: { Table } do
       if reference.mastIndex == 0 then
         local index = reference.refrIndex :: number
 
@@ -557,11 +574,8 @@ local function remapMasters(plugin: PluginData, master: PluginData, target: stri
 
   local nextIndex = nextReferenceIndex(master)
 
-  for _, key in plugin.order do
+  for _, key in plugin.cells do
     local object = plugin.objects[key]
-
-    if object.type ~= 'Cell' then continue end
-
     local references = {}
 
     for _, reference in (object.references or {}) :: { Table } do
@@ -615,7 +629,8 @@ local function remapIndices(data: Value, remap: { [number]: number }): Value
   return rows
 end
 
-local function remapTextures(plugin: PluginData, master: PluginData, journal: Journal)
+--- The highest index among the master's textures, met in the order its objects are kept in.
+local function walkedHighest(master: PluginData): number?
   local highest: number? = nil
 
   for _, object in master.objects do
@@ -625,6 +640,29 @@ local function remapTextures(plugin: PluginData, master: PluginData, journal: Jo
       if not highest or index > highest then highest = index end
     end
   end
+
+  return highest
+end
+
+--- The highest index among the master's textures, or nil when it has none. Numbers come to
+--- the same in any order, so only the textures are read; an index that isn't a number, or is
+--- NaN, is told from the rest by where it is met, and has them all walked as they were.
+local function highestTexture(master: PluginData): number?
+  local highest: number? = nil
+
+  for _, key in master.textures do
+    local index = master.objects[key].index
+
+    if type(index) ~= 'number' or index ~= index then return walkedHighest(master) end
+
+    if not highest or index > highest then highest = index end
+  end
+
+  return highest
+end
+
+local function remapTextures(plugin: PluginData, master: PluginData, journal: Journal)
+  local highest = highestTexture(master)
 
   if not highest then return end
 
@@ -737,10 +775,10 @@ local function removeDeleted(data: PluginData, journal: Journal)
     if log then table.insert(log, `Removed deleted object: {id}`) end
   end
 
-  for _, key in data.order do
+  for _, key in data.cells do
     local object = data.objects[key]
 
-    if not object or object.type ~= 'Cell' then continue end
+    if not object then continue end
 
     local kept = {}
 
