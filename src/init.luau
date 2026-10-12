@@ -847,6 +847,49 @@ local function orderedObjects(data: PluginData): { Record }
   return [for position in sorted[1:count, 'u32'] => found[position + 1]]
 end
 
+-- `data`'s topics in the order merge_to_master writes them: journals first, the rest by dialogue
+-- type and id. A topic is kept under its id, so no two have one, and each is placed by one
+-- number: its type's place, then where its id falls among the ids.
+local function orderedGroups(data: PluginData): { Group }
+  local capacity = #data.dialogueOrder
+  local span = capacity + 1
+  local keys = buffer.create(capacity * 8)
+  local groups: { Group }, ids: { string } = table.create(capacity), table.create(capacity)
+  local count = 0
+
+  for _, key in data.dialogueOrder do
+    local group = data.dialogues[key]
+    local dialogue = group and group.dialogue
+
+    if not dialogue then continue end
+
+    local kind = tes3.string(dialogue.dialogueType)
+    local place = if kind == 'Journal' then 0 else (DialogueTypeOrder[kind] or 5) + 1
+    buffer.writef64(keys, count * 8, place * span)
+    count += 1
+    groups[count], ids[count] = group, tes3.string(dialogue.id)
+  end
+
+  if count == 0 then return groups end
+
+  local inOrder = table.clone(ids)
+  local ranks: { [string]: number } = {}
+  table.sort(inOrder)
+
+  for rank, id in inOrder do
+    ranks[id] = rank
+  end
+
+  for position, id in ids do
+    local slot = (position - 1) * 8
+    buffer.writef64(keys, slot, buffer.readf64(keys, slot) + ranks[id])
+  end
+
+  local sorted = buffer.create(count * 4)
+  plane.argsort(keys, 'f64', 0, count, sorted)
+  return [for position in sorted[1:count, 'u32'] => groups[position + 1]]
+end
+
 -- The order merge_to_master writes records in: tes3's type order, then each record's sort hint
 -- and id; cells and path grids by name, each path grid after its cell; journals first among
 -- topics, the rest by dialogue type and id.
@@ -856,32 +899,8 @@ local function intoRecords(data: PluginData): Records
   records[1] = data.header
   table.move(objects, 1, #objects, 2, records)
 
-  local groups = {}
-
-  for _, key in data.dialogueOrder do
-    local group = data.dialogues[key]
-
-    if group and group.dialogue then table.insert(groups, group) end
-  end
-
-  local function journal(group: Group): number
-    local kind = tes3.string((group.dialogue :: Record).dialogueType)
-    return if kind == 'Journal' then -1 else DialogueTypeOrder[kind] or 5
-  end
-
-  table.sort(groups, function(left, right)
-    local leftRank, rightRank = journal(left), journal(right)
-
-    if leftRank ~= rightRank then return leftRank < rightRank end
-
-    return bytesLess(
-      tes3.string((left.dialogue :: Record).id),
-      tes3.string((right.dialogue :: Record).id)
-    )
-  end)
-
   -- SNDG (38) sorts after cells and before dialogue; it was placed with the objects above.
-  for _, group in groups do
+  for _, group in orderedGroups(data) do
     table.insert(records, group.dialogue :: Record)
     local node = group.head
 
