@@ -132,15 +132,7 @@ end
 
 --- What tells a record apart: its type, and the id or name it goes by.
 function support.labels(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type ~= 'Header' then
-      table.insert(list, `{record.type}:{record.id or record.name}`)
-    end
-  end
-
-  return list
+  return [for record in records if record.type ~= 'Header' => `{record.type}:{record.id or record.name}`]
 end
 
 --- Each reference of a cell's: its master and index, by its id.
@@ -156,15 +148,11 @@ end
 
 --- Each INFO's place in its chain: its id, and the ids it names before and after.
 function support.chain(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type == 'DialogueInfo' then
-      table.insert(list, `{record.id}<{record.prevId}|{record.nextId}>`)
-    end
-  end
-
-  return list
+  return [
+    for record in records
+    if record.type == 'DialogueInfo'
+    => `{record.id}<{record.prevId}|{record.nextId}>`
+  ]
 end
 
 --- The first record of a type, with the id or name given if one is.

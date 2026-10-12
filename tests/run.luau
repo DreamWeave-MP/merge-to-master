@@ -60,27 +60,19 @@ local function info(id: string, prev: string?, next: string?, fields: Record?): 
 end
 
 local function ids(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type ~= 'Header' then
-      table.insert(list, `{record.type}:{record.id or record.name or record.effectId}`)
-    end
-  end
-
-  return list
+  return [
+    for record in records
+    if record.type ~= 'Header'
+    => `{record.type}:{record.id or record.name or record.effectId}`
+  ]
 end
 
 local function chain(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type == 'DialogueInfo' then
-      table.insert(list, `{record.id}<{record.prevId}|{record.nextId}>`)
-    end
-  end
-
-  return list
+  return [
+    for record in records
+    if record.type == 'DialogueInfo'
+    => `{record.id}<{record.prevId}|{record.nextId}>`
+  ]
 end
 
 suite.describe('merge-to-master', function()
@@ -119,13 +111,7 @@ suite.describe('merge-to-master', function()
         masterName = 'B.esp',
         masters = { ['a.esm'] = { header() }, ['c.esm'] = { header() } },
       })
-      local masters = {}
-
-      for _, entry in merged[1].masters do
-        table.insert(masters, entry[1])
-      end
-
-      expect(masters).toEqual { 'A.esm', 'D.esm', 'C.esm' }
+      expect([for entry in merged[1].masters => entry[1]]).toEqual { 'A.esm', 'D.esm', 'C.esm' }
       local references = {}
 
       for _, reference in merged[2].references do

@@ -169,11 +169,11 @@ suite.describe('merge', function()
     expect(result.summary and result.summary.texturesRemapped).toBe(2)
 
     local merged = support.read(master)
-    local indices = {}
-
-    for _, record in merged do
-      if record.type == 'LandscapeTexture' then table.insert(indices, `{record.id}={record.index}`) end
-    end
+    local indices = [
+      for record in merged
+      if record.type == 'LandscapeTexture'
+      => `{record.id}={record.index}`
+    ]
 
     expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2' }
     local words = bytes.fromBase64(support.find(merged, 'Landscape').textureIndices.data)

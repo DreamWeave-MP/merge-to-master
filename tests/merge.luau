@@ -89,15 +89,11 @@ end
 
 --- What tells a merged record apart: its type, and the id, cell, or name it goes by.
 local function labels(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type ~= 'Header' then
-      table.insert(list, `{record.type}:{record.id or record.cell or record.name}`)
-    end
-  end
-
-  return list
+  return [
+    for record in records
+    if record.type ~= 'Header'
+    => `{record.type}:{record.id or record.cell or record.name}`
+  ]
 end
 
 --- The first record of a type, with the id or name given if one is.
@@ -123,15 +119,11 @@ local function placed(record: Record): { [string]: string }
 end
 
 local function chain(records: { Record }): { string }
-  local list = {}
-
-  for _, record in records do
-    if record.type == 'DialogueInfo' then
-      table.insert(list, `{record.id}<{record.prevId}|{record.nextId}>`)
-    end
-  end
-
-  return list
+  return [
+    for record in records
+    if record.type == 'DialogueInfo'
+    => `{record.id}<{record.prevId}|{record.nextId}>`
+  ]
 end
 
 local Mastered = { masterName = 'Master.esm' }
@@ -203,13 +195,7 @@ suite.describe('masters', function()
     })
     expect(labels(merged)).toEqual { 'Static:Rock', 'Static:Tree' }
 
-    local names = {}
-
-    for _, entry in merged[1].masters do
-      table.insert(names, entry[1])
-    end
-
-    expect(names).toEqual { 'Base.ESM' }
+    expect([for entry in merged[1].masters => entry[1]]).toEqual { 'Base.ESM' }
   end)
 end)
 
@@ -306,11 +292,7 @@ suite.describe('cells', function()
       masterName = 'Master.esm',
       masters = { ['base.esm'] = { header() } },
     })
-    local order = {}
-
-    for _, item in merged[2].references do
-      table.insert(order, `{item.id}@{item.mastIndex}:{item.refrIndex}`)
-    end
+    local order = [for item in merged[2].references => `{item.id}@{item.mastIndex}:{item.refrIndex}`]
 
     expect(order).toEqual { 'chair@0:1', 'desk@0:2', 'carpet@1:2', 'lamp@0:3' }
     expect(placed(master[2])).toEqual { chair = '0:1', table = '0:2', rug = '1:2' }
@@ -323,13 +305,11 @@ suite.describe('cells', function()
       masterName = 'Master.esm',
       masters = { ['base.esm'] = { header() } },
     })
-    local order = {}
 
-    for _, item in find(merged, 'Cell').references do
-      table.insert(order, `{item.id}@{item.mastIndex}:{item.refrIndex}`)
-    end
-
-    return order
+    return [
+      for item in find(merged, 'Cell').references
+      => `{item.id}@{item.mastIndex}:{item.refrIndex}`
+    ]
   end
 
   suite.it('replaces a reference at an index of any size, whole or not', function()
@@ -393,13 +373,11 @@ suite.describe('textures', function()
     }
     local plugin = { header { { 'Master.esm', 1 } }, texture('rock', 0), texture('Grass', 1), land }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local indices = {}
-
-    for _, record in merged do
-      if record.type == 'LandscapeTexture' then
-        table.insert(indices, `{record.id}={record.index}`)
-      end
-    end
+    local indices = [
+      for record in merged
+      if record.type == 'LandscapeTexture'
+      => `{record.id}={record.index}`
+    ]
 
     -- A landscape's texture index is one more than the texture's own; 0 is no texture.
     expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2' }
@@ -467,13 +445,11 @@ suite.describe('textures', function()
       land(1, { { 0, 1, 2, 3 }, { 70001, 3.5 }, {} }),
     }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local indices = {}
-
-    for _, record in merged do
-      if record.type == 'LandscapeTexture' then
-        table.insert(indices, `{record.id}={record.index}`)
-      end
-    end
+    local indices = [
+      for record in merged
+      if record.type == 'LandscapeTexture'
+      => `{record.id}={record.index}`
+    ]
 
     expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2', 'Far=3', 'Half=4' }
 
@@ -558,13 +534,11 @@ suite.describe('dialogue', function()
     local master = { header(), dial 'Topic', info('I1', 'I0', ''), old }
     local plugin = { header { { 'Master.esm', 1 } }, dial 'Topic', new, info('I2', '', '') }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local texts = {}
-
-    for _, record in merged do
-      if record.type == 'DialogueInfo' then
-        table.insert(texts, `{record.id}:{record.text}<{record.prevId}|{record.nextId}>`)
-      end
-    end
+    local texts = [
+      for record in merged
+      if record.type == 'DialogueInfo'
+      => `{record.id}:{record.text}<{record.prevId}|{record.nextId}>`
+    ]
 
     expect(texts).toEqual { 'I2:<|>', 'nil:new<I2|I1>', 'I1:<|>' }
   end)
@@ -631,11 +605,7 @@ suite.describe('removeDeleted', function()
         master,
         { masterName = 'Master.esm', removeDeleted = true, log = log }
       )
-      local kept = {}
-
-      for _, item in find(merged, 'Cell').references do
-        table.insert(kept, `{item.id}@{item.refrIndex}`)
-      end
+      local kept = [for item in find(merged, 'Cell').references => `{item.id}@{item.refrIndex}`]
 
       expect(kept).toEqual { 'RÖCK@2', 'ROCK@3', 'nil@5' }
       expect(summary.objectsRemoved).toBe(1)
@@ -705,12 +675,7 @@ suite.describe('order', function()
       { type = 'Skill', flags = '', skillId = 'Block' },
     }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local order = {}
-
-    for index = 2, #merged do
-      local record = merged[index]
-      table.insert(order, record.skillId or record.effectId or record.id)
-    end
+    local order = [for record in merged[2:#merged] => record.skillId or record.effectId or record.id]
 
     expect(order).toEqual { 'Block', 'Armorer', 'WaterBreathing', 'Shield', 'Sand', 'Rock' }
   end)
@@ -812,11 +777,7 @@ suite.describe('order', function()
     }
     local plugin = { header { { 'Master.esm', 1 } }, { type = 'Skill', flags = '', skillId = 'None' } }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local order = {}
-
-    for index = 2, #merged do
-      table.insert(order, merged[index].skillId or merged[index].effectId)
-    end
+    local order = [for record in merged[2:#merged] => record.skillId or record.effectId]
 
     expect(order).toEqual { 'Juggling', 'None', 'Block', 'Tidiness', 'WaterBreathing' }
   end)
@@ -846,12 +807,10 @@ suite.describe('order', function()
       exterior('Cell', 1, 0),
     }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
-    local order = {}
-
-    for index = 2, #merged do
-      local record = merged[index]
-      table.insert(order, `{record.type} {record.name} {record.data.grid[1]},{record.data.grid[2]}`)
-    end
+    local order = [
+      for {type: kind, name, data: {grid}} in merged[2:#merged]
+      => `{kind} {name} {grid[1]},{grid[2]}`
+    ]
 
     expect(order).toEqual {
       'Cell  2,0',
