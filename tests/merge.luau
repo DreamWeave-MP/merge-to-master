@@ -417,6 +417,29 @@ suite.describe('textures', function()
     expect(find(merged, 'LandscapeTexture', 'Grass').index).toBe(4)
   end)
 
+  suite.it('keeps a master\'s one texture that has no index, and remaps nothing by it', function()
+    local bare = texture('Bare', 0)
+    bare.index = nil
+    local master = { header(), bare, static 'Rock' }
+    local land = {
+      type = 'Landscape',
+      flags = '',
+      grid = { 0, 0 },
+      textureIndices = { data = { { 0, 1, 2 } } },
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, static 'Bush', land }
+    local merged, summary = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual {
+      'LandscapeTexture:Bare',
+      'Static:Bush',
+      'Static:Rock',
+      'Landscape:nil',
+    }
+    expect(find(merged, 'LandscapeTexture').index).toBe(nil)
+    expect(find(merged, 'Landscape') == land).toBe(true)
+    expect(summary.texturesRemapped).toBe(0)
+  end)
+
   suite.it('remaps only the words that number a texture of the plugin\'s', function()
     local master = { header(), texture('Sand', 0), texture('Rock', 1) }
     local grid = buffer.create(512)
