@@ -197,6 +197,58 @@ suite.describe('masters', function()
 
     expect([for entry in merged[1].masters => entry[1]]).toEqual { 'Base.ESM' }
   end)
+
+  suite.it('continues another master\'s chain wherever the plugin names that master', function()
+    local base = { header(), dial 'Talk', info('B1', '', 'B2'), info('B2', 'B1', '') }
+    local master = { header(), dial 'talk', info('M1', 'B2', ''), info('M2', 'M1', '') }
+
+    for _, names in { { 'Base.esm', 'Master.esm' }, { 'Master.esm', 'Base.esm' } } do
+      local plugin = {
+        header { { names[1], 1 }, { names[2], 1 } },
+        dial 'TALK',
+        info('P1', 'B1', ''),
+      }
+      local merged = mergeToMaster.merge(
+        plugin,
+        master,
+        { masterName = 'Master.esm', masters = { ['base.esm'] = base } }
+      )
+      expect(labels(merged)).toEqual {
+        'Dialogue:TALK',
+        'DialogueInfo:P1',
+        'DialogueInfo:M1',
+        'DialogueInfo:M2',
+      }
+
+      expect(chain(merged)).toEqual { 'P1<B1|B2>', 'M1<B2|M2>', 'M2<M1|>' }
+      expect(chain(master)).toEqual { 'M1<B2|>', 'M2<M1|>' }
+      expect(chain(base)).toEqual { 'B1<|B2>', 'B2<B1|>' }
+    end
+  end)
+
+  suite.it('merges a master the plugin names twice into itself, and takes both names for it', function()
+    local master = {
+      header(),
+      cell('Hall', { reference(0, 1, 'Rock'), reference(0, 2, 'Tree') }),
+      dial 'Topic',
+      info('I1', '', ''),
+      info('I2', 'I1', ''),
+      info('I3', 'I2', ''),
+    }
+
+    local plugin = {
+      header { { 'Master.esm', 1 }, { 'MASTER.ESM', 1 } },
+      cell('Hall', { reference(0, 1, 'Bush'), reference(2, 1, 'Stone') }),
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(merged[1].masters).toEqual {}
+    expect(placed(find(merged, 'Cell', 'Hall'))).toEqual { Stone = '0:1', Tree = '0:2', Bush = '0:3' }
+    expect(chain(merged)).toEqual { 'I1<|I2>', 'I2<I1|I3>', 'I3<I2|>' }
+    expect(chain(master)).toEqual { 'I1<|>', 'I2<I1|>', 'I3<I2|>' }
+
+    plugin[1].masters = { { 'Master.esm', 1 } }
+    expect(chain((mergeToMaster.merge(plugin, master, Mastered)))).toEqual { 'I1<|>', 'I2<I1|>', 'I3<I2|>' }
+  end)
 end)
 
 suite.describe('objects', function()
@@ -906,6 +958,70 @@ suite.describe('order', function()
       'Dialogue:Curio',
       'Dialogue:Odd',
     }
+  end)
+
+  suite.it('writes thousands of records as it writes a few: by id, and one name\'s as they came', function()
+    local state, arrived = 0x2545f491, 0
+
+    local function nextRandom(): number
+      state = bit32.bxor(state, bit32.lshift(state, 13))
+      state = bit32.bxor(state, bit32.rshift(state, 17))
+      state = bit32.bxor(state, bit32.lshift(state, 5))
+      return state
+    end
+
+    -- A cell on the grid or its path grid, under one of forty names, numbered as it is made.
+    local function named(kind: string, row: number): Record
+      arrived += 1
+      local name = `Region {nextRandom() % 40}`
+      local data = { flags = '', grid = { arrived, row } }
+      local record = cell(name, {}, { data = data, arrived = arrived })
+      record.type = kind
+
+      if kind == 'PathGrid' then record.cell, record.name = name, nil end
+
+      return record
+    end
+
+    local master, plugin = { header() }, { header { { 'Master.esm', 1 } } }
+
+    for index = 1, 3000 do
+      table.insert(master, static(`{nextRandom() % 100000} {index}`))
+
+      if index % 4 == 0 then
+        table.insert(master, named(if index % 12 == 0 then 'PathGrid' else 'Cell', 0))
+      end
+    end
+
+    for index = 1, 400 do
+      table.insert(plugin, static(`{nextRandom() % 100000} added {index}`))
+
+      if index % 4 == 0 then
+        table.insert(plugin, named(if index % 8 == 0 then 'PathGrid' else 'Cell', 1))
+      end
+    end
+
+    -- Whether `left` is written before `right`: by name, a path grid after the cells of its
+    -- name, and each as it came.
+    local function before(left: Record, right: Record): boolean
+      local leftName, rightName = left.name or left.cell, right.name or right.cell
+
+      if leftName ~= rightName then return leftName < rightName end
+
+      if left.type ~= right.type then return left.type == 'Cell' end
+
+      return left.arrived < right.arrived
+    end
+
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local statics = [for record in merged if record.type == 'Static' => record.id]
+    local placed = [for record in merged if record.type == 'Cell' or record.type == 'PathGrid' => record]
+
+    expect(#merged).toBe(4251)
+    expect(#statics).toBe(3400)
+    expect(all[for index in range(2, #statics) => statics[index - 1] < statics[index]]).toBe(true)
+    expect(#placed).toBe(850)
+    expect(all[for index in range(2, #placed) => before(placed[index - 1], placed[index])]).toBe(true)
   end)
 end)
 
