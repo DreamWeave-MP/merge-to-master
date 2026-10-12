@@ -775,6 +775,33 @@ suite.describe('order', function()
     }
   end)
 
+  suite.it('writes textures between -1 and the greatest index among records of every sort', function()
+    local master = {
+      header(),
+      texture('Last', 4194302),
+      static 'Rock',
+      texture('Seventh', 7),
+      { type = 'Skill', flags = '', skillId = 'Block' },
+      texture('Before', -1),
+      cell 'Hall',
+      texture('First', 0),
+      dial 'Topic',
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, static 'Bush', texture('before', -1) }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual {
+      'Skill:nil',
+      'LandscapeTexture:before',
+      'LandscapeTexture:First',
+      'LandscapeTexture:Seventh',
+      'LandscapeTexture:Last',
+      'Static:Bush',
+      'Static:Rock',
+      'Cell:Hall',
+      'Dialogue:Topic',
+    }
+  end)
+
   suite.it('writes a skill and a magic effect it has no number for before the others', function()
     local master = {
       header(),
