@@ -323,13 +323,22 @@ local function packedIndices(reference: Table): number?
   return master * IndexLimit + index
 end
 
+-- Where each reference of a cell is in its list, by its master and index. One is cleared and
+-- filled again for every cell of a merge, so that it grows to the largest cell's size once.
+type Places = { [string | number]: number }
+
 --- The master's references with the plugin's among them: each of the plugin's in place of the
 --- master's at its master and index, or after them all. Two references are at the same place
 --- when their indices are written the same, which whole numbers are when they are equal: with
 --- `packed`, each pair is one number, and the answer is nil when a pair can't be.
-local function mergeReferences(master: { Table }, plugin: { Table }, packed: boolean): { Table }?
+local function mergeReferences(
+  master: { Table },
+  plugin: { Table },
+  packed: boolean,
+  at: Places
+): { Table }?
   local references = table.clone(master)
-  local at: { [string | number]: number } = {}
+  table.clear(at)
 
   for index, reference in references do
     local key: (string | number)? = if packed
@@ -361,7 +370,7 @@ local function mergeReferences(master: { Table }, plugin: { Table }, packed: boo
   return references
 end
 
-local function mergeCell(plugin: Record, master: Record): Record
+local function mergeCell(plugin: Record, master: Record, at: Places): Record
   local merged = table.clone(master)
   merged.flags = plugin.flags
   merged.name = plugin.name
@@ -372,7 +381,8 @@ local function mergeCell(plugin: Record, master: Record): Record
   end
 
   local theirs, ours = (master.references or {}) :: { Table }, (plugin.references or {}) :: { Table }
-  merged.references = mergeReferences(theirs, ours, true) or mergeReferences(theirs, ours, false)
+  merged.references = mergeReferences(theirs, ours, true, at)
+    or mergeReferences(theirs, ours, false, at)
   return merged
 end
 
@@ -397,6 +407,7 @@ end
 -- journaled: merge_to_master silences its log while it reads the masters.
 local function mergeInto(source: PluginData, target: PluginData, journal: Journal?)
   target.header = source.header
+  local places: Places = {}
 
   for key, ignored in source.ignored do
     target.ignored[key] = ignored
@@ -414,7 +425,7 @@ local function mergeInto(source: PluginData, target: PluginData, journal: Journa
     end
 
     if existing and object.type == 'Cell' then
-      local merged = mergeCell(object, existing)
+      local merged = mergeCell(object, existing, places)
 
       if source.ignored[object] then target.ignored[merged] = true end
 
