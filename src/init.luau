@@ -464,18 +464,10 @@ local function mergeInto(source: PluginData, target: PluginData, journal: Journa
     if journal then note(journal, existing ~= nil, key) end
 
     if not existing then
-      -- A topic the target doesn't have is moved over whole, chain and all.
-      local copy = addDialogue(target, key)
-      copy.dialogue = group.dialogue
-      local node = group.head
-
-      while node do
-        local moved: Node = { info = node.info, prev = nil, next = nil }
-        pushBack(copy, moved)
-        copy.byId[tes3.string(node.info.id)] = moved
-        node = node.next
-      end
-
+      -- A topic the target doesn't have is moved over whole, chain and all: the source is done
+      -- with once it is merged, so the target takes the topic itself and not a copy.
+      target.dialogues[key] = group
+      table.insert(target.dialogueOrder, key)
       continue
     end
 
