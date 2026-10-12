@@ -233,6 +233,20 @@ suite.describe('objects', function()
     local merged = mergeToMaster.merge(plugin, master, Mastered)
     expect(labels(merged)).toEqual { 'Sound:Rock', 'Script:Rock', 'Static:rock' }
   end)
+
+  suite.it('folds the case of an id\'s ASCII letters and of no other byte', function()
+    local master = { header(), static('Röck', 'old.nif') }
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      static('RöCK', 'new.nif'),
+      static('RÖCK', 'other.nif'),
+    }
+    local merged, summary = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual { 'Static:RÖCK', 'Static:RöCK' }
+    expect(merged[3].mesh).toBe 'new.nif'
+    expect(summary.merged).toBe(1)
+    expect(summary.copied).toBe(1)
+  end)
 end)
 
 suite.describe('cells', function()
@@ -302,6 +316,70 @@ suite.describe('cells', function()
     expect(placed(master[2])).toEqual { chair = '0:1', table = '0:2', rug = '1:2' }
     expect(placed(plugin[2])).toEqual { desk = '1:2', carpet = '2:2', lamp = '0:1' }
   end)
+
+  --- Each reference of the one cell merged: its id, master, and index, in the cell's order.
+  local function mergedReferences(plugin: { Record }, master: { Record }): { string }
+    local merged = mergeToMaster.merge(plugin, master, {
+      masterName = 'Master.esm',
+      masters = { ['base.esm'] = { header() } },
+    })
+    local order = {}
+
+    for _, item in find(merged, 'Cell').references do
+      table.insert(order, `{item.id}@{item.mastIndex}:{item.refrIndex}`)
+    end
+
+    return order
+  end
+
+  suite.it('replaces a reference at an index of any size, whole or not', function()
+    local master = {
+      header { { 'Base.esm', 1 } },
+      cell('Hall', {
+        reference(0, 2 ^ 40, 'far'),
+        reference(0, 1.5, 'half'),
+        reference(1, 2 ^ 30, 'theirs'),
+        reference(0, 7, 'near'),
+      }),
+    }
+
+    local plugin = {
+      header { { 'Master.esm', 1 }, { 'Base.esm', 1 } },
+      cell('Hall', {
+        reference(1, 2 ^ 40, 'farther'),
+        reference(1, 1.5, 'halved'),
+        reference(2, 2 ^ 30, 'ours'),
+        reference(0, 1, 'new'),
+      }),
+    }
+
+    expect(mergedReferences(plugin, master)).toEqual {
+      'farther@0:1099511627776',
+      'halved@0:1.5',
+      'ours@1:1073741824',
+      'near@0:7',
+      'new@0:1099511627777',
+    }
+  end)
+
+  suite.it('takes an index spelled as text for the number it spells', function()
+    local spelled = reference(0, 0, 'spelled')
+    spelled.refrIndex = '5'
+    local master = { header(), cell('Hall', { spelled }) }
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      cell('Hall', { reference(1, 5, 'numbered'), reference(0, 1, 'new') }),
+    }
+
+    expect(mergedReferences(plugin, master)).toEqual { 'numbered@0:5', 'new@0:6' }
+  end)
+
+  suite.it('keeps a reference under a master of -0 apart from one under 0', function()
+    local master = { header(), cell('Hall', { reference(-0, 3, 'under') }) }
+    local plugin = { header { { 'Master.esm', 1 } }, cell('Hall', { reference(1, 3, 'over') }) }
+
+    expect(mergedReferences(plugin, master)).toEqual { 'under@-0:3', 'over@0:3' }
+  end)
 end)
 
 suite.describe('textures', function()
@@ -359,6 +437,58 @@ suite.describe('textures', function()
     local plugin = { header { { 'Master.esm', 1 } }, texture('Grass', 4) }
     local merged = mergeToMaster.merge(plugin, master, Mastered)
     expect(find(merged, 'LandscapeTexture', 'Grass').index).toBe(4)
+  end)
+
+  suite.it('remaps only the words that number a texture of the plugin\'s', function()
+    local master = { header(), texture('Sand', 0), texture('Rock', 1) }
+    local grid = buffer.create(512)
+
+    -- The last is 70001 less 65536: one more than the index of `Far`, as a word would wrap it.
+    for place, word in { 0, 1, 2, 3, 65535, 4465 } do
+      buffer.writeu16(grid, (place - 1) * 2, word)
+    end
+
+    local function land(column: number, data: { { number } } | string): Record
+      return {
+        type = 'Landscape',
+        flags = '',
+        grid = { column, 0 },
+        textureIndices = { data = data },
+      }
+    end
+
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      texture('rock', 0),
+      texture('Grass', 1),
+      texture('Far', 70000),
+      texture('Half', 2.5),
+      land(0, bytes.toBase64(grid)),
+      land(1, { { 0, 1, 2, 3 }, { 70001, 3.5 }, {} }),
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local indices = {}
+
+    for _, record in merged do
+      if record.type == 'LandscapeTexture' then
+        table.insert(indices, `{record.id}={record.index}`)
+      end
+    end
+
+    expect(indices).toEqual { 'Sand=0', 'rock=1', 'Grass=2', 'Far=3', 'Half=4' }
+
+    local lands = {}
+
+    for _, record in merged do
+      if record.type == 'Landscape' then lands[record.grid[1] + 1] = record.textureIndices.data end
+    end
+
+    local words = bytes.fromBase64(lands[1])
+    local read = [for place in range(1, 6) => buffer.readu16(words, (place - 1) * 2)]
+
+    expect(buffer.len(words)).toBe(512)
+    expect(read).toEqual { 0, 2, 3, 3, 65535, 4465 }
+    expect(lands[2]).toEqual { { 0, 2, 3, 3 }, { 4, 5 }, {} }
   end)
 end)
 
@@ -421,6 +551,23 @@ suite.describe('dialogue', function()
     local plugin = { header { { 'Master.esm', 1 } }, info('I1', '', '') }
     expect(function() mergeToMaster.merge(plugin, master, Mastered) end).toThrow 'Orphan DialogueInfo I1'
   end)
+
+  suite.it('takes an INFO without an id for one whose id is empty', function()
+    local old, new = info('', '', '', 'old'), info('', '', '', 'new')
+    old.id, new.id = nil, nil
+    local master = { header(), dial 'Topic', info('I1', 'I0', ''), old }
+    local plugin = { header { { 'Master.esm', 1 } }, dial 'Topic', new, info('I2', '', '') }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local texts = {}
+
+    for _, record in merged do
+      if record.type == 'DialogueInfo' then
+        table.insert(texts, `{record.id}:{record.text}<{record.prevId}|{record.nextId}>`)
+      end
+    end
+
+    expect(texts).toEqual { 'I2:<|>', 'nil:new<I2|I1>', 'I1:<|>' }
+  end)
 end)
 
 suite.describe('removeDeleted', function()
@@ -460,6 +607,69 @@ suite.describe('removeDeleted', function()
       expect(#master[4].references).toBe(5)
     end
   )
+
+  suite.it(
+    'finds the references to a deleted object by its id, case folded as its own is',
+    function()
+      local unnamed = reference(0, 5, '')
+      unnamed.id = nil
+      local master = {
+        header(),
+        static 'Röck',
+        cell('Hall', {
+          reference(0, 1, 'röck'),
+          reference(0, 2, 'RÖCK'),
+          reference(0, 3, 'ROCK'),
+          reference(0, 4, 'RöCK'),
+          unnamed,
+        }),
+      }
+      local plugin = { header { { 'Master.esm', 1 } }, static('RöCK', '', 'DELETED') }
+      local log = {}
+      local merged, summary = mergeToMaster.merge(
+        plugin,
+        master,
+        { masterName = 'Master.esm', removeDeleted = true, log = log }
+      )
+      local kept = {}
+
+      for _, item in find(merged, 'Cell').references do
+        table.insert(kept, `{item.id}@{item.refrIndex}`)
+      end
+
+      expect(kept).toEqual { 'RÖCK@2', 'ROCK@3', 'nil@5' }
+      expect(summary.objectsRemoved).toBe(1)
+      expect(summary.referencesRemoved).toBe(2)
+      expect(log).toEqual {
+        'Merging object to master: STAT RöCK',
+        'Removed deleted object: röck',
+        'Removed deleted reference: röck (0, 1) from hall',
+        'Removed deleted reference: röck (0, 4) from hall',
+      }
+    end
+  )
+
+  suite.it('drops only the references marked deleted when no object is', function()
+    local master = {
+      header(),
+      static 'Rock',
+      cell('Attic', { reference(0, 1, 'Rock') }),
+      cell('Hall', { reference(0, 2, 'Rock'), reference(0, 3, 'Rock', { deleted = true }) }),
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, static 'Tree' }
+    local log = {}
+    local merged, summary = mergeToMaster.merge(
+      plugin,
+      master,
+      { masterName = 'Master.esm', removeDeleted = true, log = log }
+    )
+
+    expect(placed(find(merged, 'Cell', 'Attic'))).toEqual { Rock = '0:1' }
+    expect(placed(find(merged, 'Cell', 'Hall'))).toEqual { Rock = '0:2' }
+    expect(find(merged, 'Cell', 'Attic') == master[3]).toBe(false)
+    expect(summary.referencesRemoved).toBe(1)
+    expect(log).toEqual { 'Copying object to master: STAT Tree' }
+  end)
 end)
 
 suite.describe('order', function()
@@ -503,6 +713,162 @@ suite.describe('order', function()
     end
 
     expect(order).toEqual { 'Block', 'Armorer', 'WaterBreathing', 'Shield', 'Sand', 'Rock' }
+  end)
+
+  suite.it('writes the records of a type by their ids, byte by byte', function()
+    local master = {
+      header(),
+      static 'rock1',
+      static 'Rock2',
+      static 'Rock',
+      static '9',
+      static 'Rock\0',
+      static '10',
+      static 'Rock 1',
+    }
+
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      static 'Bush',
+      { type = 'Activator', flags = '', id = 'Zeta' },
+      { type = 'Sound', flags = '', id = 'zeta', soundPath = '' },
+      { type = 'Sound', flags = '', id = 'Rock', soundPath = '' },
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual {
+      'Sound:Rock',
+      'Sound:zeta',
+      'Static:10',
+      'Static:9',
+      'Static:Bush',
+      'Static:Rock',
+      'Static:Rock\0',
+      'Static:Rock 1',
+      'Static:Rock2',
+      'Static:rock1',
+      'Activator:Zeta',
+    }
+  end)
+
+  suite.it('writes a texture by an index of any size, whole or not', function()
+    local master = {
+      header(),
+      texture('Far', 2 ^ 40),
+      texture('One', 1),
+      texture('Half', 0.5),
+      static 'Rock',
+      texture('Below', -3),
+      texture('Wide', 4194303),
+      texture('Narrow', 4194302),
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, static 'Bush' }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual {
+      'LandscapeTexture:Below',
+      'LandscapeTexture:Half',
+      'LandscapeTexture:One',
+      'LandscapeTexture:Narrow',
+      'LandscapeTexture:Wide',
+      'LandscapeTexture:Far',
+      'Static:Bush',
+      'Static:Rock',
+    }
+  end)
+
+  suite.it('writes a skill and a magic effect it has no number for before the others', function()
+    local master = {
+      header(),
+      { type = 'Skill', flags = '', skillId = 'Block' },
+      { type = 'Skill', flags = '', skillId = 'Juggling' },
+      { type = 'MagicEffect', flags = '', effectId = 'WaterBreathing' },
+      { type = 'MagicEffect', flags = '', effectId = 'Tidiness' },
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, { type = 'Skill', flags = '', skillId = 'None' } }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local order = {}
+
+    for index = 2, #merged do
+      table.insert(order, merged[index].skillId or merged[index].effectId)
+    end
+
+    expect(order).toEqual { 'Juggling', 'None', 'Block', 'Tidiness', 'WaterBreathing' }
+  end)
+
+  suite.it('writes cells of one name in the order they came, then its path grids', function()
+    local function exterior(kind: string, column: number, row: number): Record
+      local record = cell('', {}, { data = { flags = '', grid = { column, row } } })
+      record.type = kind
+
+      if kind == 'PathGrid' then record.cell, record.name = '', nil end
+
+      return record
+    end
+
+    local master = {
+      header(),
+      exterior('PathGrid', 0, 0),
+      exterior('Cell', 2, 0),
+      cell 'Attic',
+      exterior('Cell', 1, 0),
+    }
+
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      exterior('PathGrid', 1, 1),
+      exterior('Cell', 0, 5),
+      exterior('Cell', 1, 0),
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    local order = {}
+
+    for index = 2, #merged do
+      local record = merged[index]
+      table.insert(order, `{record.type} {record.name} {record.data.grid[1]},{record.data.grid[2]}`)
+    end
+
+    expect(order).toEqual {
+      'Cell  2,0',
+      'Cell  1,0',
+      'Cell  0,5',
+      'PathGrid nil 0,0',
+      'PathGrid nil 1,1',
+      'Cell Attic 0,0',
+    }
+  end)
+
+  suite.it('writes journals first among topics, the rest by their type, then id', function()
+    local master = {
+      header(),
+      dial('Zebra', 'Topic'),
+      dial('Quest', 'Journal'),
+      dial('Hello', 'Greeting'),
+      dial('Apple', 'Topic'),
+      dial('Shout', 'Voice'),
+      dial('Bribe', 'Persuasion'),
+      dial('Odd', 'Elsewise'),
+    }
+
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      dial('Diary', 'Journal'),
+      dial('apple2', 'Topic'),
+      dial('Curio', 'Otherwise'),
+      static 'Rock',
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(labels(merged)).toEqual {
+      'Static:Rock',
+      'Dialogue:Diary',
+      'Dialogue:Quest',
+      'Dialogue:Apple',
+      'Dialogue:Zebra',
+      'Dialogue:apple2',
+      'Dialogue:Shout',
+      'Dialogue:Hello',
+      'Dialogue:Bribe',
+      'Dialogue:Curio',
+      'Dialogue:Odd',
+    }
   end)
 end)
 
