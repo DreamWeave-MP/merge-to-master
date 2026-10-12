@@ -197,6 +197,9 @@ local function insertInfo(group: Group, info: Record)
     group.byId[id] = nil
   end
 
+  -- Looked for before the INFO is in the chain, as merge_to_master does: one that names itself
+  -- as its previous finds none, and goes to the end.
+  local previous = group.byId[prevId]
   local node: Node = { info = info, prev = nil, next = nil }
   group.byId[id] = node
 
@@ -204,8 +207,6 @@ local function insertInfo(group: Group, info: Record)
     pushFront(group, node)
     return
   end
-
-  local previous = group.byId[prevId]
 
   if previous then
     insertAfter(group, previous, node)

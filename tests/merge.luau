@@ -565,6 +565,34 @@ suite.describe('dialogue', function()
 
     expect(texts).toEqual { 'I2:<|>', 'nil:new<I2|I1>', 'I1:<|>' }
   end)
+
+  suite.it('puts an INFO that names itself as its previous at the end of its chain', function()
+    local master = {
+      header(),
+      dial 'Topic',
+      info('I1', '', ''),
+      info('I2', 'I2', ''),
+      info('I3', 'I2', ''),
+      info('I4', 'nowhere', ''),
+    }
+    local plugin = { header { { 'Master.esm', 1 } }, static 'Rock' }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(chain(merged)).toEqual { 'I1<|>', 'I2<I2|>', 'I3<I2|>', 'I4<nowhere|>' }
+  end)
+
+  suite.it('moves an INFO of the master\'s that the plugin has naming itself to the end', function()
+    local master = { header(), dial 'Topic', info('I1', '', 'I2'), info('I2', 'I1', '') }
+    local plugin = {
+      header { { 'Master.esm', 1 } },
+      dial 'Topic',
+      info('I2', 'I2', '', 'new'),
+      info('I3', 'nowhere', ''),
+    }
+    local merged = mergeToMaster.merge(plugin, master, Mastered)
+    expect(chain(merged)).toEqual { 'I1<|I2>', 'I2<I1|I3>', 'I3<I2|>' }
+    expect(find(merged, 'DialogueInfo', 'I2').text).toBe 'new'
+    expect(chain(master)).toEqual { 'I1<|I2>', 'I2<I1|>' }
+  end)
 end)
 
 suite.describe('removeDeleted', function()
