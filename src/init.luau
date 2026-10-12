@@ -681,6 +681,16 @@ local function remapTextures(plugin: PluginData, master: PluginData, journal: Jo
 end
 
 local function removeIgnored(data: PluginData)
+  -- Only another master's records are ignored. Without one, every object and INFO stays, and
+  -- the topics alone are looked at.
+  if next(data.ignored) == nil then
+    for key, group in data.dialogues do
+      if group.dialogue == nil then data.dialogues[key] = nil end
+    end
+
+    return
+  end
+
   for key, object in data.objects do
     if data.ignored[object] then data.objects[key] = nil end
   end
