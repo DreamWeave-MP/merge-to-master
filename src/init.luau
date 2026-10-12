@@ -707,7 +707,9 @@ end
 -- merge_to_master's `remove_deleted`. It logs each object it removes, and each reference removed
 -- because its object was: one marked deleted itself goes without a line.
 local function removeDeleted(data: PluginData, journal: Journal)
-  local deleted: { [string]: boolean } = {}
+  -- The ids of the objects removed, lowercased; and for each id a reference has, spelled as it
+  -- has it, whether that is one of them. A master places the same few ids over and over.
+  local deleted: { [string]: boolean }, orphans: { [string]: boolean } = {}, {}
   local summary, log = journal.summary, journal.log
 
   for _, key in data.order do
@@ -733,7 +735,19 @@ local function removeDeleted(data: PluginData, journal: Journal)
     for _, reference in (object.references or {}) :: { Table } do
       local ownReference = reference.mastIndex == 0
       local marked = ownReference and reference.deleted == true
-      local orphaned = ownReference and not marked and deleted[tes3.lower(reference.id)] == true
+      local orphaned = false
+
+      if ownReference and not marked then
+        local name = tes3.string(reference.id)
+        local found = orphans[name]
+
+        if found == nil then
+          found = deleted[string.lower(name)] == true
+          orphans[name] = found
+        end
+
+        orphaned = found
+      end
 
       if not marked and not orphaned then
         table.insert(kept, reference)
