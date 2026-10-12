@@ -411,18 +411,16 @@ end
 
 -- merge_to_master logs each object and topic of the plugin's as merged into the master's, or
 -- copied to a master without one: `name` is its tag and id, or the topic's id lowercased.
-local function note(journal: Journal, had: boolean, name: string)
-  local summary = journal.summary
-
+local function note({summary, log}: Journal, had: boolean, name: string)
   if had then
     summary.merged += 1
   else
     summary.copied += 1
   end
 
-  if journal.log then
+  if log then
     local verb = if had then 'Merging' else 'Copying'
-    table.insert(journal.log, `{verb} object to master: {name}`)
+    table.insert(log, `{verb} object to master: {name}`)
   end
 end
 
@@ -661,7 +659,7 @@ local function highestTexture(master: PluginData): number?
   return highest
 end
 
-local function remapTextures(plugin: PluginData, master: PluginData, journal: Journal)
+local function remapTextures(plugin: PluginData, master: PluginData, {summary, log}: Journal)
   local highest = highestTexture(master)
 
   if not highest then return end
@@ -690,11 +688,11 @@ local function remapTextures(plugin: PluginData, master: PluginData, journal: Jo
       copy.index = new
       plugin.objects[key] = copy
       remap[old + 1] = new + 1
-      journal.summary.texturesRemapped += 1
+      summary.texturesRemapped += 1
 
-      if journal.log then
+      if log then
         local id = tes3.string(texture.id)
-        table.insert(journal.log, `Remapping texture index: ({old} -> {new}) {id}`)
+        table.insert(log, `Remapping texture index: ({old} -> {new}) {id}`)
       end
     end
   end
@@ -760,7 +758,7 @@ local function removeDeleted(data: PluginData, journal: Journal)
   -- The ids of the objects removed, lowercased; and for each id a reference has, spelled as it
   -- has it, whether that is one of them. A master places the same few ids over and over.
   local deleted: { [string]: boolean }, orphans: { [string]: boolean } = {}, {}
-  local summary, log = journal.summary, journal.log
+  local {summary, log} = journal
 
   for _, key in data.order do
     local object = data.objects[key]

@@ -196,17 +196,17 @@ local function backupPlace(master: string): (Backup?, string?)
 end
 
 --- Moves the master to its backup; nil, or why it couldn't be.
-local function moveToBackup(master: string, backup: Backup, log: { string }): string?
-  table.insert(log, `Creating backup directory: {backup.folder}`)
-  local made, unmade = fs.mkdir(backup.folder, { recursive = true })
+local function moveToBackup(master: string, {folder, path}: Backup, log: { string }): string?
+  table.insert(log, `Creating backup directory: {folder}`)
+  local made, unmade = fs.mkdir(folder, { recursive = true })
 
-  if not made then return unmade or `'{backup.folder}' can't be made` end
+  if not made then return unmade or `'{folder}' can't be made` end
 
   table.insert(log, 'Finding next available backup file name...')
-  table.insert(log, `Creating backup file: {backup.path}`)
-  local moved, unmoved = fs.rename(master, backup.path)
+  table.insert(log, `Creating backup file: {path}`)
+  local moved, unmoved = fs.rename(master, path)
 
-  if not moved then return unmoved or `'{master}' can't be moved to '{backup.path}'` end
+  if not moved then return unmoved or `'{master}' can't be moved to '{path}'` end
 
   return nil
 end

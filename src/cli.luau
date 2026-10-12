@@ -113,16 +113,14 @@ local function parse(argv: { string }, folder: string?): (Command?, string?)
 
   -- What a flag does where it stands: the command it ends the reading with, or why it can't be
   -- given.
-  local function apply(flag: Flag): (Command?, string?)
-    if flag.action == 'help' then return { action = 'help' :: 'help' }, nil end
+  local function apply({action, long}: Flag): (Command?, string?)
+    if action == 'help' then return { action = 'help' :: 'help' }, nil end
 
-    if flag.action == 'version' then return { action = 'version' :: 'version' }, nil end
+    if action == 'version' then return { action = 'version' :: 'version' }, nil end
 
-    if given[flag.long] then
-      return nil, `the argument '--{flag.long}' cannot be used multiple times`
-    end
+    if given[long] then return nil, `the argument '--{long}' cannot be used multiple times` end
 
-    given[flag.long] = true
+    given[long] = true
     return nil, nil
   end
 
@@ -199,26 +197,28 @@ local function parse(argv: { string }, folder: string?): (Command?, string?)
 end
 
 local function render(result: commands.MergeResult): string
-  if result.outcome == 'missingMasters' then
+  local {outcome, master, backup, logFile} = result
+
+  if outcome == 'missingMasters' then
     local names = table.concat(result.missing, ', ')
-    return `merge-to-master: '{result.plugin}' names masters that aren't beside '{result.master}': {names}`
+    return `merge-to-master: '{result.plugin}' names masters that aren't beside '{master}': {names}`
   end
 
-  if result.outcome == 'backupFailed' then
+  if outcome == 'backupFailed' then
     return `merge-to-master: Failed to create backup. {result.backupProblem or ''}`
   end
 
   local lines = {}
 
   if result.dryRun then
-    table.insert(lines, `Dry run, nothing written: {result.master}`)
+    table.insert(lines, `Dry run, nothing written: {master}`)
 
-    if result.backup then table.insert(lines, `Backup would be: {result.backup}`) end
+    if backup then table.insert(lines, `Backup would be: {backup}`) end
   else
-    table.insert(lines, `Merge Successful: {result.master}`)
+    table.insert(lines, `Merge Successful: {master}`)
   end
 
-  if result.logFile then table.insert(lines, `Log available at: {result.logFile}`) end
+  if logFile then table.insert(lines, `Log available at: {logFile}`) end
 
   return table.concat(lines, '\n')
 end
