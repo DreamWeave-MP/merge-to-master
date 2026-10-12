@@ -559,16 +559,7 @@ local function remapMasters(plugin: PluginData, master: PluginData, target: stri
   header.masters = newMasters :: { Value }
   plugin.header = header
 
-  local identity = true
-
-  for index = 0, #pluginMasters do
-    if remap[index] ~= index then
-      identity = false
-      break
-    end
-  end
-
-  if identity then return end
+  if all[for index in range(0, #pluginMasters) => remap[index] == index] then return end
 
   local nextIndex = nextReferenceIndex(master)
 
