@@ -40,27 +40,57 @@ Without a scratch folder the command isn't timed, and no capability is needed.
 - Date: 2026-10-12.
 - Binary: the verified release build of Jess 0.1.0 on l3i 2.0.1 (Luau 0.742), the same one for
   both sides, with the same `@tes3` and `@tes3conv` beside both.
-- Base: `d345af1`, the package before the move, with this bench. Head: `9caaa78`.
+- Base: `d345af1`, the package before the move, with this bench. Head: `3b8741a`, the move and
+  the one fix after it, which costs nothing.
 - Protocol: the whole bench run against base, then head, seven times over, back to back under one
   lock; each cell is the median of its seven runs. A difference under 5 percent is called no
   change.
 
 | Workload | Base | Head | Base / head |
 |---|---:|---:|---:|
-| a plugin of 2286 records into a master of 16142 | 37.82 ms | 19.19 ms | 1.97x |
-| the same, removing the deleted, with the log | 43.10 ms | 27.19 ms | 1.58x |
-| objects: 4000 into 24000 | 65.86 ms | 26.69 ms | 2.47x |
-| cells: 192 of 96 references into 256 of 128 | 16.38 ms | 10.75 ms | 1.52x |
-| cells, removing the deleted: 192 of 96 references into 256 of 128 | 26.23 ms | 16.80 ms | 1.56x |
-| landscape textures: 64 and 512 landscapes into 200 and 1024 | 4.824 ms | 3.497 ms | 1.38x |
-| dialogue: 500 topics into 800 of 16 INFOs | 17.90 ms | 10.86 ms | 1.65x |
-| dialogue after that of another master: 325 topics into 400 of 12 INFOs | 8.889 ms | 6.391 ms | 1.39x |
-| commands.merge, a dry run: files of 1086 records into 5792 | 70.82 ms | 61.90 ms | 1.14x |
+| a plugin of 2286 records into a master of 16142 | 35.83 ms | 17.75 ms | 2.02x |
+| the same, removing the deleted, with the log | 43.82 ms | 25.90 ms | 1.69x |
+| objects: 4000 into 24000 | 61.57 ms | 26.37 ms | 2.34x |
+| cells: 192 of 96 references into 256 of 128 | 15.89 ms | 10.34 ms | 1.54x |
+| cells, removing the deleted: 192 of 96 references into 256 of 128 | 25.66 ms | 16.21 ms | 1.58x |
+| landscape textures: 64 and 512 landscapes into 200 and 1024 | 4.753 ms | 3.533 ms | 1.35x |
+| dialogue: 500 topics into 800 of 16 INFOs | 16.00 ms | 10.75 ms | 1.49x |
+| dialogue after that of another master: 325 topics into 400 of 12 INFOs | 7.633 ms | 6.521 ms | 1.17x |
+| commands.merge, a dry run: files of 1086 records into 5792 | 68.52 ms | 62.72 ms | 1.09x |
 
-The machine was busy enough that a ratio is good to about a tenth of itself. Two runs of five
-rounds before this one, the second on the same head, gave 1.96x and 2.04x for the whole merge,
-2.03x and 2.32x for objects, 1.49x and 1.57x for cells, 1.55x and 1.53x for dialogue, and 1.04x
-and 1.06x for the command.
+This table is the second measurement of the move, made by its review, and it replaces the first.
+The first, the same seven rounds on `9caaa78`, gave 1.97x, 1.58x, 2.47x, 1.52x, 1.56x, 1.38x,
+1.65x, 1.39x, and 1.14x down the same rows: within a tenth of these but for the two dialogue
+rows. The topics after another master's are 1.2x, not 1.4x: their base read 8.889 ms in that run
+and has read 7.1 to 8.5 ms in every run since, the two dialogue rows alone, nine rounds, gave
+1.56x and 1.26x, and the two runs of five rounds before the first table gave 1.55x and 1.53x for
+the one and 1.10x and 1.20x for the other. The same nine rounds put `9caaa78` beside the head and
+found them the same, 10.34 ms against 10.08 ms and 6.07 ms against 6.14 ms.
+
+Each change made for speed, timed alone: its parent against it, five rounds, on the row it is in.
+
+| Change | Row | Parent | Change | Parent / change |
+|---|---|---:|---:|---:|
+| `1dca43c`, the objects ordered by `argsort` | objects | 58.07 ms | 33.00 ms | 1.76x |
+| `902fce3`, a reference's master and index as one number | cells | 15.27 ms | 11.87 ms | 1.29x |
+| `fe1094c`, one index of references for every cell | cells | 11.83 ms | 10.10 ms | 1.17x |
+| `524dfe5`, the first master as it was collected | dialogue | 15.77 ms | 10.99 ms | 1.44x |
+| | dialogue after another master's | 7.762 ms | 6.959 ms | 1.12x |
+| `9f4a393`, each spelling of an id asked after once | cells, removing the deleted | 20.36 ms | 16.13 ms | 1.26x |
+| `0e2a015`, nothing walked for what to ignore | the whole merge | 18.34 ms | 17.89 ms | 1.03x, no change |
+| | objects | 25.89 ms | 25.15 ms | 1.03x, no change |
+| `1522b99`, a file's cells and textures listed | the whole merge | 17.74 ms | 16.95 ms | 1.05x |
+| | the same, removing the deleted | 26.41 ms | 25.05 ms | 1.05x |
+| | landscape textures | 3.688 ms | 3.608 ms | 1.02x, no change |
+| `adf3fa4`, an object without flags passed over | the same, removing the deleted | 26.17 ms | 25.11 ms | 1.04x, no change |
+| | cells, removing the deleted | 15.51 ms | 15.10 ms | 1.03x, no change |
+| `9caaa78`, a topic the target lacks handed over | dialogue | 10.73 ms | 10.79 ms | 0.99x, no change |
+| | dialogue after another master's | 6.969 ms | 6.378 ms | 1.09x |
+
+The first five carry the move, and `9caaa78` a tenth of one row. `0e2a015` and `adf3fa4` each
+read three or four percent faster on every row tried, which is under what this machine can tell
+from nothing, and `1522b99` is at the edge of it; none reads slower, so they stay, but they are
+not where the time went. `c1e6b64` is not in the table: `313284e` took it back.
 
 What moved, and why. Almost none of it is the dialect's syntax: the `all` over a range, the
 record patterns, and the comprehensions the suites took are in code that runs once a merge or
@@ -85,7 +115,7 @@ them.
 What moved least: the command. Reading the two files and writing the merged one is `@tes3`'s and
 `@tes3conv`'s work. Timed apart from the command over the same files, `merge` was 12.3 ms of its
 72 before and is 6.3 ms of its 67, a sixth then and a tenth now: under a tenth is what the row
-can have gained, and the 1.14x of this run is that and the machine. The texture remap itself is
+can have gained, and the 1.09x of this run is that. The texture remap itself is
 as it was: its time is the base64 both ways and a table read per word, and a buffer in the
 table's place measured 1.5 µs against 1.9 µs a landscape in a probe, too little of the row to
 take; the row's gain is the ordering and the walks around it. An intern pool for the deleted ids
