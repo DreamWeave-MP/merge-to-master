@@ -40,22 +40,27 @@ Without a scratch folder the command isn't timed, and no capability is needed.
 - Date: 2026-10-12.
 - Binary: the verified release build of Jess 0.1.0 on l3i 2.0.1 (Luau 0.742), the same one for
   both sides, with the same `@tes3` and `@tes3conv` beside both.
-- Base: `d345af1`, the package before the move, with this bench. Head: `313284e`.
-- Protocol: the whole bench run against base, then head, five times over, back to back under one
-  lock; each cell is the median of its five runs. A difference under 5 percent is called no
+- Base: `d345af1`, the package before the move, with this bench. Head: `9caaa78`.
+- Protocol: the whole bench run against base, then head, seven times over, back to back under one
+  lock; each cell is the median of its seven runs. A difference under 5 percent is called no
   change.
 
 | Workload | Base | Head | Base / head |
 |---|---:|---:|---:|
-| a plugin of 2286 records into a master of 16142 | 34.51 ms | 17.60 ms | 1.96x |
-| the same, removing the deleted, with the log | 42.15 ms | 26.03 ms | 1.62x |
-| objects: 4000 into 24000 | 54.42 ms | 26.84 ms | 2.03x |
-| cells: 192 of 96 references into 256 of 128 | 15.80 ms | 10.62 ms | 1.49x |
-| cells, removing the deleted: 192 of 96 references into 256 of 128 | 25.71 ms | 15.86 ms | 1.62x |
-| landscape textures: 64 and 512 landscapes into 200 and 1024 | 4.574 ms | 3.646 ms | 1.25x |
-| dialogue: 500 topics into 800 of 16 INFOs | 16.20 ms | 10.44 ms | 1.55x |
-| dialogue after that of another master: 325 topics into 400 of 12 INFOs | 7.695 ms | 6.970 ms | 1.10x |
-| commands.merge, a dry run: files of 1086 records into 5792 | 65.47 ms | 62.93 ms | no change |
+| a plugin of 2286 records into a master of 16142 | 37.82 ms | 19.19 ms | 1.97x |
+| the same, removing the deleted, with the log | 43.10 ms | 27.19 ms | 1.58x |
+| objects: 4000 into 24000 | 65.86 ms | 26.69 ms | 2.47x |
+| cells: 192 of 96 references into 256 of 128 | 16.38 ms | 10.75 ms | 1.52x |
+| cells, removing the deleted: 192 of 96 references into 256 of 128 | 26.23 ms | 16.80 ms | 1.56x |
+| landscape textures: 64 and 512 landscapes into 200 and 1024 | 4.824 ms | 3.497 ms | 1.38x |
+| dialogue: 500 topics into 800 of 16 INFOs | 17.90 ms | 10.86 ms | 1.65x |
+| dialogue after that of another master: 325 topics into 400 of 12 INFOs | 8.889 ms | 6.391 ms | 1.39x |
+| commands.merge, a dry run: files of 1086 records into 5792 | 70.82 ms | 61.90 ms | 1.14x |
+
+The machine was busy enough that a ratio is good to about a tenth of itself. Two runs of five
+rounds before this one, the second on the same head, gave 1.96x and 2.04x for the whole merge,
+2.03x and 2.32x for objects, 1.49x and 1.57x for cells, 1.55x and 1.53x for dialogue, and 1.04x
+and 1.06x for the command.
 
 What moved, and why. Almost none of it is the dialect's syntax: the `all` over a range, the
 record patterns, and the comprehensions the suites took are in code that runs once a merge or
@@ -67,22 +72,25 @@ a path grid after its cell), and the f64s are sorted by one stable `@dream/data`
 object whose hint isn't a small whole number sends them all to the comparator, as before. That is
 most of the objects row, and what is left of the ordering is the sort of the ids themselves and
 the table that ranks them. The first master a merge reads is no longer merged, record by record
-and INFO by INFO, into an empty set to make the same set again: that is the dialogue row, and a
-tenth of the rest. A cell's references are found by master and index as one number in a table
-that is cleared and reused from cell to cell, where each was a string made by interpolation in a
-table made for the cell: the cells rows. `removeDeleted` asks once for each spelling of an id
+and INFO by INFO, into an empty set to make the same set again, and a topic the target lacks is
+handed over as it is where its chain was copied node by node: those two are the dialogue rows,
+and a tenth of the rest. A cell's references are found by master and index as one number in a
+table that is cleared and reused from cell to cell, where each was a string made by interpolation
+in a table made for the cell: the cells rows. `removeDeleted` asks once for each spelling of an id
 whether its object was deleted, where it lowered the id of every reference, and searches the
 flags only of objects that have any. And a file's cells and textures are listed as they are
 collected, so the passes over references and texture indices no longer walk every object to find
 them.
 
-What did not move: the command. Reading the two files and writing the merged one is `@tes3`'s and
+What moved least: the command. Reading the two files and writing the merged one is `@tes3`'s and
 `@tes3conv`'s work. Timed apart from the command over the same files, `merge` was 12.3 ms of its
-72 before and is 6.3 ms of its 67, a sixth then and a tenth now, and the 4 percent the row shows
-is under what this machine could tell apart while it was shared. A topic set that another master
-leads keeps most of its cost, the INFOs of the target being inserted into the other master's
-chains one by one as they were. The texture remap itself is as it was: its time is the base64
-both ways and a table read per word, and a buffer in the table's place measured 1.5 µs against
-1.9 µs a landscape in a probe, too little of the row to take. An intern pool for the deleted ids
+72 before and is 6.3 ms of its 67, a sixth then and a tenth now: under a tenth is what the row
+can have gained, and the 1.14x of this run is that and the machine. The texture remap itself is
+as it was: its time is the base64 both ways and a table read per word, and a buffer in the
+table's place measured 1.5 µs against 1.9 µs a landscape in a probe, too little of the row to
+take; the row's gain is the ordering and the walks around it. An intern pool for the deleted ids
 measured slower than the table of spellings that replaced the lowering, and sizing the list of a
-cell's renumbered references ahead measured as nothing; neither is in.
+cell's renumbered references ahead measured as nothing; neither is in. Keeping the objects of the
+families that share their ids under the bare id, without a prefix joined to it, was worth a
+twentieth of the objects row and was taken back: the keys order the walk that finds the highest
+texture of a master whose indices aren't all numbers, and that order is the baseline's to keep.
