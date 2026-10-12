@@ -765,7 +765,8 @@ local function removeDeleted(data: PluginData, journal: Journal)
   for _, key in data.order do
     local object = data.objects[key]
 
-    if not object or not tes3.isDeleted(object) then continue end
+    -- Most objects have no flags at all, and so none to search for the deleted one.
+    if not object or object.flags == '' or not tes3.isDeleted(object) then continue end
 
     local id = string.lower(tes3.editorId(object))
     data.objects[key] = nil
