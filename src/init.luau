@@ -306,25 +306,48 @@ local function setAllIgnored(data: PluginData)
   end
 end
 
-local function mergeCell(plugin: Record, master: Record): Record
-  local merged = table.clone(master)
-  merged.flags = plugin.flags
-  merged.name = plugin.name
-  merged.data = plugin.data
+-- Below this, a reference's master and index are held as one number.
+local IndexLimit = 67108864
 
-  for _, field in { 'region', 'mapColor', 'waterHeight', 'atmosphereData' } do
-    if plugin[field] ~= nil then merged[field] = plugin[field] end
-  end
+--- A reference's master and index as one number, when each is a whole number from 0 up to
+--- `IndexLimit`. Written out, -0 isn't 0, so it has none: its reciprocal is below 0.
+local function packedIndices(reference: Table): number?
+  local master, index = reference.mastIndex, reference.refrIndex
 
-  local references: { Table } = table.clone((master.references or {}) :: { Table })
-  local at: { [string]: number } = {}
+  if type(master) ~= 'number' or type(index) ~= 'number' then return nil end
+
+  if not (master < IndexLimit and 1 / master > 0 and master % 1 == 0) then return nil end
+
+  if not (index < IndexLimit and 1 / index > 0 and index % 1 == 0) then return nil end
+
+  return master * IndexLimit + index
+end
+
+--- The master's references with the plugin's among them: each of the plugin's in place of the
+--- master's at its master and index, or after them all. Two references are at the same place
+--- when their indices are written the same, which whole numbers are when they are equal: with
+--- `packed`, each pair is one number, and the answer is nil when a pair can't be.
+local function mergeReferences(master: { Table }, plugin: { Table }, packed: boolean): { Table }?
+  local references = table.clone(master)
+  local at: { [string | number]: number } = {}
 
   for index, reference in references do
-    at[`{reference.mastIndex}:{reference.refrIndex}`] = index
+    local key: (string | number)? = if packed
+      then packedIndices(reference)
+      else `{reference.mastIndex}:{reference.refrIndex}`
+
+    if not key then return nil end
+
+    at[key] = index
   end
 
-  for _, reference in (plugin.references or {}) :: { Table } do
-    local key = `{reference.mastIndex}:{reference.refrIndex}`
+  for _, reference in plugin do
+    local key: (string | number)? = if packed
+      then packedIndices(reference)
+      else `{reference.mastIndex}:{reference.refrIndex}`
+
+    if not key then return nil end
+
     local index = at[key]
 
     if index then
@@ -335,7 +358,21 @@ local function mergeCell(plugin: Record, master: Record): Record
     end
   end
 
-  merged.references = references
+  return references
+end
+
+local function mergeCell(plugin: Record, master: Record): Record
+  local merged = table.clone(master)
+  merged.flags = plugin.flags
+  merged.name = plugin.name
+  merged.data = plugin.data
+
+  for _, field in { 'region', 'mapColor', 'waterHeight', 'atmosphereData' } do
+    if plugin[field] ~= nil then merged[field] = plugin[field] end
+  end
+
+  local theirs, ours = (master.references or {}) :: { Table }, (plugin.references or {}) :: { Table }
+  merged.references = mergeReferences(theirs, ours, true) or mergeReferences(theirs, ours, false)
   return merged
 end
 
