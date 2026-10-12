@@ -1,0 +1,674 @@
+--!strict
+-- merge-to-master, timed from Luau: `merge` over record lists the size a mod's master and its
+-- plugin are, whole and by the part of a merge each pair is mostly made of (objects, cells and
+-- their references, landscape textures, dialogue), and `commands.merge` over such a pair as
+-- files. Run by `jess run --package . --package-path .. bench/bench.luau [filter] [scratch]`, on
+-- a release build. The command is timed only when a scratch folder is given to write the files
+-- into, which takes `--capability filesystem.read --capability filesystem.write`.
+--
+-- Prints one line per workload: its name, a tab, and the seconds one call takes. Every workload's
+-- result is hashed whole, before the timing and after it, and has to come to the hash written
+-- here: a merge that stopped doing the work, or does other work, fails instead of posting a time.
+local bytes = require '@dream/bytes'
+local mergeToMaster = require '@merge-to-master'
+local records = require '@tes3conv/records'
+
+-- A build without the verified toolchain runs Luau slower than a release does, so a number from
+-- one says nothing about what ships.
+if not jess.bench.verified then
+  error('merge-to-master bench: this jess was built without the verified toolchain: measure on a release build', 0)
+end
+
+type Table = records.Table
+type Value = records.Value
+type Record = records.Record
+type Records = records.Records
+
+--- What a workload returns: all a merge gave back, and the log it was handed.
+type Merged = { records: Records, summary: Table, log: { string }? }
+
+--- A filter on the workload names, none running them all; and a folder to write plugin files
+--- into, without which the command isn't timed.
+local filter: string?, scratch: string? = ...
+local only = if filter and filter ~= '' then filter else nil
+
+local function median(samples: { number }): number
+  table.sort(samples)
+  return samples[(#samples + 1) // 2]
+end
+
+-- A full collection, run between batches, so one batch's garbage isn't the next one's collection.
+local collect = jess.bench.collect
+
+--- Adds everything `value` holds to `hasher`: a list in its order, a record's fields in the order
+--- of their names, so two tables holding the same hash the same however they were built.
+local function hash(hasher: dream_bytes_Hasher, value: Value?)
+  if type(value) ~= 'table' then
+    hasher:update(`{type(value)} {value};`)
+    return
+  end
+
+  if #value > 0 then
+    hasher:update '['
+
+    for _, item in value do
+      hash(hasher, item)
+    end
+
+    hasher:update ']'
+    return
+  end
+
+  local names: { string } = {}
+
+  for name in value do
+    table.insert(names, name :: string)
+  end
+
+  table.sort(names)
+  hasher:update '{'
+
+  for _, name in names do
+    hasher:update(`{name}=`)
+    hash(hasher, value[name])
+  end
+
+  hasher:update '}'
+end
+
+local function digest(merged: Merged): string
+  local hasher = bytes.hasher 'xxh3'
+  hash(hasher, merged.records)
+  hash(hasher, merged.summary)
+  hash(hasher, merged.log)
+  return hasher:finish()
+end
+
+--- Seconds per call of `body`: warmed up, then the median of seven batches of a size that takes
+--- about a tenth of a second. What `body` returns has to hash to `expected` before the batches
+--- and after them.
+local function measure(name: string, expected: string, body: () -> Merged): number
+  local function verify()
+    local got = digest(body())
+
+    if got ~= expected then error(`{name}: the result hashes to {got}, not {expected}`, 0) end
+  end
+
+  collect()
+  verify()
+  local start = os.clock()
+  body()
+  local once = math.max(os.clock() - start, 1e-7)
+  local iterations = math.max(1, math.floor(0.1 / once))
+  local samples = {}
+
+  for batch = 1, 7 do
+    collect()
+    start = os.clock()
+
+    for _ = 1, iterations do
+      body()
+    end
+
+    samples[batch] = (os.clock() - start) / iterations
+  end
+
+  verify()
+  return median(samples)
+end
+
+--- Times `body`, and prints its name and its seconds per call.
+local function workload(name: string, expected: string, body: () -> Merged)
+  if only and not string.find(name, only, 1, true) then return end
+
+  print(`{name}\t{measure(name, expected, body)}`)
+end
+
+local random = 0
+
+local function nextRandom(): number
+  random = bit32.bxor(random, bit32.lshift(random, 13))
+  random = bit32.bxor(random, bit32.rshift(random, 17))
+  random = bit32.bxor(random, bit32.lshift(random, 5))
+  return random
+end
+
+local function pick(list: { string }): string return list[nextRandom() % #list + 1] end
+
+local MasterName, OtherName = 'Master.esm', 'Other.esm'
+
+local Words =
+  { 'ex', 'in', 'furn', 'flora', 'terrain', 'common', 'de', 'hlaalu', 'redoran', 'telvanni', 'dwrv' }
+
+-- Statics three times over: most of what a master holds is placed things.
+local Kinds = {
+  'Static',
+  'Static',
+  'Static',
+  'Activator',
+  'Armor',
+  'Book',
+  'Class',
+  'Container',
+  'Creature',
+  'Door',
+  'Enchanting',
+  'Faction',
+  'GameSetting',
+  'GlobalVariable',
+  'Ingredient',
+  'LeveledItem',
+  'Light',
+  'MiscItem',
+  'Npc',
+  'Region',
+  'Script',
+  'Sound',
+  'SoundGen',
+  'Spell',
+  'Weapon',
+}
+
+-- Records `@tes3conv` writes as a plugin from an id and a mesh alone.
+local Statics = { 'Static' }
+
+local Skills = { 'Block', 'Armorer', 'Axe', 'Spear', 'Enchant', 'Sneak', 'Marksman' }
+local Effects = { 'WaterBreathing', 'Shield', 'Burden', 'Levitate', 'Open', 'FireDamage', 'Mark' }
+local DialogueTypes = { 'Topic', 'Voice', 'Greeting', 'Persuasion', 'Journal' }
+
+--- How much of each thing a master and the plugin made on it hold.
+type Shape = {
+  --- The master's objects, and the plugin's: those of the master's it has its own of, the first
+  --- `deleted` of them marked deleted, and those new to the master.
+  objects: number,
+  overrides: number,
+  deleted: number,
+  additions: number,
+  --- The master's cells, each of `references`; and the plugin's cells over them, each placing
+  --- `placed`: by turns one of the master's moved and one of its own.
+  cells: number,
+  references: number,
+  cellOverrides: number,
+  placed: number,
+  --- The master's textures and landscapes, and the plugin's.
+  textures: number,
+  textureOverrides: number,
+  landscapes: number,
+  landscapeOverrides: number,
+  --- The master's topics, each of `infos`, and those the plugin adds INFOs to.
+  topics: number,
+  infos: number,
+  topicOverrides: number,
+  --- The topics another master of the plugin's has too. None, and the plugin has no other.
+  shared: number,
+}
+
+type World = { plugin: Records, master: Records, masters: { [string]: Records }? }
+
+local function header(fileType: string, masters: { Value }): Record
+  return {
+    type = 'Header',
+    flags = '',
+    version = 1.2999999523162842,
+    fileType = fileType,
+    author = '',
+    description = '',
+    numObjects = 0,
+    masters = masters,
+  }
+end
+
+local function reference(master: number, index: number, id: string): Table
+  return {
+    mastIndex = master,
+    refrIndex = index,
+    id = id,
+    temporary = true,
+    translation = { nextRandom() % 8192, nextRandom() % 8192, nextRandom() % 1024 },
+    rotation = { 0, 0, 0 },
+  }
+end
+
+--- The cell numbered `index`: every fourth an interior, the rest on the grid, nameless in a
+--- region as most of a master's are.
+local function cell(index: number, shout: boolean): Record
+  if index % 4 == 0 then
+    local name = `Hall {index}`
+
+    return {
+      type = 'Cell',
+      flags = '',
+      name = if shout then string.upper(name) else name,
+      data = { flags = 'IS_INTERIOR', grid = { 0, 0 } },
+      references = {},
+    }
+  end
+
+  return {
+    type = 'Cell',
+    flags = '',
+    name = '',
+    region = `Region {index % 7}`,
+    data = { flags = '', grid = { index % 64 - 32, index // 64 - 32 } },
+    references = {},
+  }
+end
+
+local function pathGrid(of: Record): Record
+  return { type = 'PathGrid', flags = '', cell = of.name, data = { grid = (of.data :: Table).grid } }
+end
+
+--- A landscape's texture indices as tes3conv spells them: the base64 of 256 words, each none or
+--- one more than the index of one of the first `textures` textures.
+local function textureGrid(textures: number): string
+  local words = buffer.create(512)
+
+  for offset = 0, 510, 2 do
+    buffer.writeu16(words, offset, nextRandom() % (textures + 1))
+  end
+
+  return bytes.toBase64(words)
+end
+
+--- The same as rows of numbers, which a record list made by hand may hold.
+local function textureRows(textures: number): { Value }
+  local rows: { Value } = {}
+
+  for row = 1, 16 do
+    local values: { Value } = {}
+
+    for column = 1, 16 do
+      values[column] = nextRandom() % (textures + 1)
+    end
+
+    rows[row] = values
+  end
+
+  return rows
+end
+
+local function landscape(index: number, textures: number, rows: boolean): Record
+  return {
+    type = 'Landscape',
+    flags = '',
+    grid = { index % 64 - 32, index // 64 - 32 },
+    textureIndices = { data = if rows then textureRows(textures) else textureGrid(textures) },
+  }
+end
+
+local function topic(id: string, index: number): Record
+  return { type = 'Dialogue', flags = '', id = id, dialogueType = DialogueTypes[index % 5 + 1] }
+end
+
+local function info(id: string, previous: string, following: string): Record
+  return {
+    type = 'DialogueInfo',
+    flags = '',
+    id = id,
+    prevId = previous,
+    nextId = following,
+    speakerId = '',
+    speakerRace = '',
+    speakerClass = '',
+    speakerFaction = '',
+    speakerCell = '',
+    playerFaction = '',
+    soundPath = '',
+    text = id,
+    scriptText = '',
+    filters = {},
+    data = {
+      dialogueType = 'Topic',
+      disposition = 0,
+      speakerRank = -1,
+      speakerSex = 'Any',
+      playerRank = -1,
+    },
+  }
+end
+
+--- A topic and its chain of `count` INFOs, their ids `stem` and their place, added to `list`.
+local function chain(list: Records, id: string, index: number, stem: string, count: number)
+  table.insert(list, topic(id, index))
+
+  for place = 1, count do
+    local previous = if place > 1 then `{stem}{place - 1}` else ''
+    local following = if place < count then `{stem}{place + 1}` else ''
+    table.insert(list, info(`{stem}{place}`, previous, following))
+  end
+end
+
+--- A master of `shape`, the plugin made on it, and the plugin's other master if it has one.
+--- The same shape makes the same three, record for record. `kinds` are the types its objects
+--- are of: `Kinds` for every part of a merge, `Statics` for records to write as a plugin.
+local function world(shape: Shape, kinds: { string }): World
+  random = 0x2545f491
+  local other, varied = shape.shared > 0, kinds == Kinds
+  local target = if other then 2 else 1
+  local master: Records = { header('Esm', {}) }
+  local plugin: Records = {
+    header(
+      'Esp',
+      if other then { { OtherName, 1 }, { MasterName, 1 } } else { { MasterName, 1 } }
+    ),
+  }
+  local ids: { string }, types: { string } = {}, {}
+
+  for index = 1, shape.objects do
+    ids[index], types[index] = `{pick(Words)}_{pick(Words)}_{index}`, pick(kinds)
+    table.insert(master, { type = types[index], flags = '', id = ids[index], mesh = 'theirs.nif' })
+  end
+
+  -- The plugin's own of the master's objects: spelled in capitals, and every seventh static an
+  -- activator, which replaces it all the same.
+  for index = 1, shape.overrides do
+    local from = (index * 7919) % shape.objects + 1
+    local swapped = varied and types[from] == 'Static' and index % 7 == 0
+    local kind = if swapped then 'Activator' else types[from]
+    local flags = if index <= shape.deleted then 'DELETED' else ''
+    table.insert(plugin, { type = kind, flags = flags, id = string.upper(ids[from]), mesh = 'own.nif' })
+  end
+
+  local added: { string } = {}
+
+  for index = 1, shape.additions do
+    added[index] = `added_{pick(Words)}_{index}`
+    table.insert(plugin, { type = pick(kinds), flags = '', id = added[index], mesh = 'own.nif' })
+  end
+
+  if varied then
+    for _, skill in Skills do
+      table.insert(master, { type = 'Skill', flags = '', skillId = skill })
+    end
+
+    for _, effect in Effects do
+      table.insert(master, { type = 'MagicEffect', flags = '', effectId = effect })
+    end
+
+    table.insert(plugin, { type = 'Skill', flags = '', skillId = Skills[3] })
+    table.insert(plugin, { type = 'MagicEffect', flags = '', effectId = Effects[5] })
+  end
+
+  for index = 0, shape.textures - 1 do
+    local id = `tx_{index}`
+    table.insert(
+      master,
+      { type = 'LandscapeTexture', flags = '', id = id, index = index, fileName = `{id}.dds` }
+    )
+  end
+
+  -- By turns a texture the master has under another index and one it lacks.
+  for index = 0, shape.textureOverrides - 1 do
+    local id = if index % 2 == 0 then `TX_{(index * 3 + 1) % shape.textures}` else `added_tx_{index}`
+    table.insert(
+      plugin,
+      { type = 'LandscapeTexture', flags = '', id = id, index = index, fileName = `{id}.dds` }
+    )
+  end
+
+  local cells: { Record } = {}
+  local nextIndex = 1
+
+  for index = 1, shape.cells do
+    local made = cell(index, false)
+    local references = made.references :: { Table }
+
+    for place = 1, shape.references do
+      references[place] = reference(0, nextIndex, pick(ids))
+      nextIndex += 1
+    end
+
+    cells[index] = made
+    table.insert(master, made)
+
+    if varied and index % 8 == 0 then table.insert(master, pathGrid(made)) end
+  end
+
+  for index = 1, shape.cellOverrides do
+    local from = (index * 31) % shape.cells + 1
+    local made = cell(from, true)
+    local references = made.references :: { Table }
+    local theirs = cells[from].references :: { Table }
+
+    if index % 3 == 0 then made.waterHeight = index end
+
+    for place = 1, shape.placed do
+      local moved = theirs[place]
+
+      if place % 2 == 1 and moved then
+        local own = reference(target, moved.refrIndex :: number, moved.id :: string)
+
+        if place % 16 == 1 then own.deleted = true end
+
+        references[place] = own
+      else
+        references[place] = reference(0, place, if #added > 0 then pick(added) else pick(ids))
+      end
+    end
+
+    table.insert(plugin, made)
+
+    if varied and index % 4 == 0 then table.insert(plugin, pathGrid(made)) end
+  end
+
+  for index = 1, shape.cellOverrides // 8 do
+    local made = cell(4 * (shape.cells + index), false)
+    local references = made.references :: { Table }
+
+    for place = 1, shape.placed do
+      references[place] = reference(0, shape.placed + place, pick(ids))
+    end
+
+    table.insert(plugin, made)
+  end
+
+  for index = 1, shape.landscapes do
+    table.insert(master, landscape(index, shape.textures, false))
+  end
+
+  for index = 1, shape.landscapeOverrides do
+    table.insert(plugin, landscape(index * 2, shape.textureOverrides, index % 16 == 0))
+  end
+
+  for index = 1, shape.topics do
+    chain(master, `topic {index}`, index, `{index}0`, shape.infos)
+  end
+
+  -- What a plugin does to a topic of its master's: an INFO changed where it stands, one put
+  -- between two, one at the front, one after an INFO nothing has, and one moved up the chain.
+  for index = 1, shape.topicOverrides do
+    local from = (index * 13) % shape.topics + 1
+    local stem = `{from}0`
+    table.insert(plugin, topic(`TOPIC {from}`, from))
+    table.insert(plugin, info(`{stem}2`, `{stem}1`, `{stem}3`))
+    table.insert(plugin, info(`{stem}between`, `{stem}3`, `{stem}4`))
+    table.insert(plugin, info(`{stem}front`, '', `{stem}1`))
+    table.insert(plugin, info(`{stem}orphan`, `{stem}nowhere`, ''))
+    table.insert(plugin, info(`{stem}{shape.infos}`, `{stem}1`, `{stem}2`))
+  end
+
+  for index = 1, shape.topicOverrides // 4 do
+    chain(plugin, `added topic {index}`, index, `added{index}0`, 4)
+  end
+
+  if not other then return { plugin = plugin, master = master } end
+
+  -- The other master's objects are never read; its topics are, and the plugin's INFOs after them.
+  local others: Records = { header('Esm', {}) }
+
+  for index = 1, 64 do
+    table.insert(others, { type = 'Static', flags = '', id = `other_{index}`, mesh = '' })
+  end
+
+  for index = 1, shape.shared do
+    local from = (index * 17) % shape.topics + 1
+    chain(others, `Topic {from}`, from, `other{from}0`, 4)
+    table.insert(plugin, topic(`topic {from}`, from))
+    table.insert(plugin, info(`{from}0after`, `other{from}04`, ''))
+    table.insert(plugin, info(`other{from}02`, `other{from}01`, `other{from}03`))
+  end
+
+  return { plugin = plugin, master = master, masters = { [string.lower(OtherName)] = others } }
+end
+
+type Request = { removeDeleted: boolean?, log: boolean? }
+
+--- A workload that merges `made`'s plugin into its master, as `request` says to.
+local function merging(made: World, request: Request): () -> Merged
+  return function()
+    local log: { string }? = if request.log then {} else nil
+    local merged, summary = mergeToMaster.merge(made.plugin, made.master, {
+      masterName = MasterName,
+      masters = made.masters,
+      removeDeleted = request.removeDeleted,
+      log = log,
+    })
+
+    return { records = merged, summary = summary :: Table, log = log }
+  end
+end
+
+local Whole: Shape = {
+  objects = 12000,
+  overrides = 800,
+  deleted = 200,
+  additions = 800,
+  cells = 512,
+  references = 48,
+  cellOverrides = 96,
+  placed = 32,
+  textures = 96,
+  textureOverrides = 24,
+  landscapes = 128,
+  landscapeOverrides = 64,
+  topics = 256,
+  infos = 12,
+  topicOverrides = 64,
+  shared = 0,
+}
+
+local None: Shape = {
+  objects = 64,
+  overrides = 0,
+  deleted = 0,
+  additions = 0,
+  cells = 0,
+  references = 0,
+  cellOverrides = 0,
+  placed = 0,
+  textures = 0,
+  textureOverrides = 0,
+  landscapes = 0,
+  landscapeOverrides = 0,
+  topics = 0,
+  infos = 0,
+  topicOverrides = 0,
+  shared = 0,
+}
+
+--- `None`, with what `changes` names changed.
+local function shaped(changes: { [string]: number }): Shape
+  local shape = table.clone(None) :: { [string]: number }
+
+  for name, value in changes do
+    shape[name] = value
+  end
+
+  return (shape :: unknown) :: Shape
+end
+
+workload(
+  'a plugin of 2286 records into a master of 16142',
+  'cc71edb15fb6c396',
+  merging(world(Whole, Kinds), {})
+)
+
+workload(
+  'the same, removing the deleted, with the log',
+  '58f3d55836227754',
+  merging(world(Whole, Kinds), { removeDeleted = true, log = true })
+)
+
+workload(
+  'objects: 4000 into 24000',
+  'eefdfc5d83555bd7',
+  merging(world(shaped { objects = 24000, overrides = 2000, additions = 2000 }, Kinds), {})
+)
+
+local Cells = { objects = 512, cells = 256, references = 128, cellOverrides = 192, placed = 96 }
+
+workload(
+  'cells: 192 of 96 references into 256 of 128',
+  'ea9f319e0d3e9050',
+  merging(world(shaped(Cells), Kinds), {})
+)
+
+-- A reference goes with its object here, so the cells' objects are the plugin's to delete.
+Cells.objects, Cells.overrides, Cells.deleted = 1024, 128, 128
+
+workload(
+  'cells, removing the deleted: 192 of 96 references into 256 of 128',
+  'b59d48d4a4ddf6ac',
+  merging(world(shaped(Cells), Kinds), { removeDeleted = true })
+)
+
+workload(
+  'landscape textures: 64 and 512 landscapes into 200 and 1024',
+  '0245159e4ead58c6',
+  merging(
+    world(
+      shaped { textures = 200, textureOverrides = 64, landscapes = 1024, landscapeOverrides = 512 },
+      Kinds
+    ),
+    {}
+  )
+)
+
+workload(
+  'dialogue: 500 topics into 800 of 16 INFOs',
+  'dcca5104dd20f578',
+  merging(world(shaped { topics = 800, infos = 16, topicOverrides = 400 }, Kinds), {})
+)
+
+workload(
+  'dialogue after that of another master: 325 topics into 400 of 12 INFOs',
+  '9a9ff893f7540155',
+  merging(world(shaped { topics = 400, infos = 12, topicOverrides = 100, shared = 200 }, Kinds), {})
+)
+
+if scratch and scratch ~= '' then
+  local commands = require '@merge-to-master/commands'
+  local tes3conv = require '@tes3conv'
+  local made = world(
+    shaped {
+      objects = 4000,
+      overrides = 400,
+      additions = 400,
+      cells = 128,
+      references = 48,
+      cellOverrides = 48,
+      placed = 32,
+      topics = 128,
+      infos = 12,
+      topicOverrides = 32,
+    },
+    Statics
+  )
+
+  local function write(name: string, list: Records): string
+    local file = tes3conv.plugin(list)
+    file:updateRecordCount()
+    local path = jess.fs.join(scratch, name)
+    jess.fs.write(path, file:save(), { backup = false })
+    return path
+  end
+
+  local plugin, master = write('Plugin.esp', made.plugin), write(MasterName, made.master)
+
+  -- The result is the counts and the log: the merged records are in neither a dry run's result
+  -- nor a file.
+  workload('commands.merge, a dry run: files of 1086 records into 5792', '1706f676b503d366', function()
+    local result = commands.merge { plugin = plugin, master = master, dryRun = true }
+    return { records = { result.records :: Table }, summary = result.summary :: Table, log = result.log }
+  end)
+end
