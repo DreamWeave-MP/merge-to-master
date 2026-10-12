@@ -39,6 +39,7 @@ are in the plugin's order, and the master's for what `removeDeleted` removes.
 ]]
 
 local bytes = require '@dream/bytes'
+local plane = require '@dream/data'
 local tes3 = require '@tes3conv/records'
 
 type Table = tes3.Table
@@ -711,10 +712,36 @@ local DialogueTypeOrder: { [string]: number } =
 
 local function bytesLess(left: string, right: string): boolean return left < right end
 
--- The order merge_to_master writes records in: tes3's type order, then each record's sort hint
--- and id; cells and path grids by name, each path grid after its cell; journals first among
--- topics, the rest by dialogue type and id.
-local function intoRecords(data: PluginData): Records
+-- What places an object among the others: its type's place in tes3's order, the number a
+-- texture, an effect, or a skill sorts by, its id, and its rank among records of that id. A cell
+-- goes by its name and a path grid by its cell's, the path grid second.
+local function placing(record: Record): (number, number, string, number)
+  local kind = record.type :: string
+  local hint, id, rank = 0, tes3.string(record.id), 0
+
+  if kind == 'LandscapeTexture' then
+    hint = record.index :: number
+    id = ''
+  elseif kind == 'MagicEffect' then
+    hint = tes3.EffectIndex[tes3.string(record.effectId)] or -1
+    id = ''
+  elseif kind == 'Skill' then
+    hint = tes3.SkillIndex[tes3.string(record.skillId)] or -1
+    id = ''
+  elseif kind == 'Cell' then
+    id = tes3.string(record.name)
+  elseif kind == 'PathGrid' then
+    id, rank = tes3.string(record.cell), 1
+  elseif kind == 'Landscape' then
+    id = ''
+  end
+
+  return tes3.SortOrder[kind], hint, id, rank
+end
+
+--- `data`'s objects in the order merge_to_master writes them, found by comparing them pair by
+--- pair: whatever places them.
+local function comparedObjects(data: PluginData): { Record }
   type Entry = {
     record: Record,
     order: number,
@@ -730,29 +757,11 @@ local function intoRecords(data: PluginData): Records
 
     if record == nil then continue end
 
-    local kind = record.type :: string
-    local hint, id, rank = 0, tes3.string(record.id), 0
-
-    if kind == 'LandscapeTexture' then
-      hint = record.index :: number
-      id = ''
-    elseif kind == 'MagicEffect' then
-      hint = tes3.EffectIndex[tes3.string(record.effectId)] or -1
-      id = ''
-    elseif kind == 'Skill' then
-      hint = tes3.SkillIndex[tes3.string(record.skillId)] or -1
-      id = ''
-    elseif kind == 'Cell' then
-      id = tes3.string(record.name)
-    elseif kind == 'PathGrid' then
-      id, rank = tes3.string(record.cell), 1
-    elseif kind == 'Landscape' then
-      id = ''
-    end
+    local order, hint, id, rank = placing(record)
 
     table.insert(entries, {
       record = record,
-      order = tes3.SortOrder[kind],
+      order = order,
       hint = hint,
       id = id,
       rank = rank,
@@ -774,11 +783,78 @@ local function intoRecords(data: PluginData): Records
     return left.position < right.position
   end)
 
-  local records: Records = { data.header }
+  return [for entry in entries => entry.record]
+end
 
-  for _, entry in entries do
-    table.insert(records, entry.record)
+-- What one number places an object by, each part a whole number the next can't reach: its
+-- type's place, then its hint, then where its id falls among the ids, then its rank. Together
+-- they stay below 2^53, where a double holds every whole number.
+local OrderLimit, HintLimit, HintSpan, IdSpan = 64, 4194303, 4194304, 16777216
+
+-- `data`'s objects in the order merge_to_master writes them. Each one's place is written as one
+-- number, the ids having been put in order among themselves first, and the numbers are sorted at
+-- once, objects with the same one staying in their order. One whose type has no place, or whose
+-- hint isn't a small whole number, has them all compared pair by pair instead.
+local function orderedObjects(data: PluginData): { Record }
+  local capacity = #data.order
+
+  if capacity >= IdSpan then return comparedObjects(data) end
+
+  local keys = buffer.create(capacity * 8)
+  local found: { Record }, ids: { string } = table.create(capacity), table.create(capacity)
+  local ranks: { [string]: number } = {}
+  local distinct: { string } = {}
+  local count = 0
+
+  for _, key in data.order do
+    local record = data.objects[key]
+
+    if record == nil then continue end
+
+    local order, hint, id, rank = placing(record)
+    local placed = type(order) == 'number' and order % 1 == 0 and order >= 0 and order < OrderLimit
+    local hinted = type(hint) == 'number' and hint % 1 == 0 and hint >= -1 and hint < HintLimit
+
+    if not (placed and hinted) then return comparedObjects(data) end
+
+    buffer.writef64(keys, count * 8, (order * HintSpan + hint + 1) * IdSpan * 2 + rank)
+    count += 1
+    found[count], ids[count] = record, id
+
+    if id ~= '' and not ranks[id] then
+      ranks[id] = 0
+      table.insert(distinct, id)
+    end
   end
+
+  if count == 0 then return {} end
+
+  table.sort(distinct)
+
+  for rank, id in distinct do
+    ranks[id] = rank
+  end
+
+  for position, id in ids do
+    if id == '' then continue end
+
+    local slot = (position - 1) * 8
+    buffer.writef64(keys, slot, buffer.readf64(keys, slot) + ranks[id] * 2)
+  end
+
+  local sorted = buffer.create(count * 4)
+  plane.argsort(keys, 'f64', 0, count, sorted)
+  return [for position in sorted[1:count, 'u32'] => found[position + 1]]
+end
+
+-- The order merge_to_master writes records in: tes3's type order, then each record's sort hint
+-- and id; cells and path grids by name, each path grid after its cell; journals first among
+-- topics, the rest by dialogue type and id.
+local function intoRecords(data: PluginData): Records
+  local objects = orderedObjects(data)
+  local records: Records = table.create(#objects + 1)
+  records[1] = data.header
+  table.move(objects, 1, #objects, 2, records)
 
   local groups = {}
 
