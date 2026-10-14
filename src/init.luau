@@ -897,7 +897,7 @@ local function orderedObjects(data: PluginData): { Record }
   if capacity >= IdSpan then return comparedObjects(data) end
 
   local keys = buffer.create(capacity * 8)
-  local found: { Record }, ids: { string } = table.create(capacity), table.create(capacity)
+  local found, ids = table.create(capacity) :: { Record }, table.create(capacity) :: { string }
   local ranks: { [string]: number } = {}
   local distinct: { string } = {}
   local count = 0
@@ -950,7 +950,7 @@ local function orderedGroups(data: PluginData): { Group }
   local capacity = #data.dialogueOrder
   local span = capacity + 1
   local keys = buffer.create(capacity * 8)
-  local groups: { Group }, ids: { string } = table.create(capacity), table.create(capacity)
+  local groups, ids = table.create(capacity) :: { Group }, table.create(capacity) :: { string }
   local count = 0
 
   for _, key in data.dialogueOrder do
@@ -991,7 +991,7 @@ end
 -- topics, the rest by dialogue type and id.
 local function intoRecords(data: PluginData): Records
   local objects = orderedObjects(data)
-  local records: Records = table.create(#objects + 1)
+  local records = table.create(#objects + 1) :: Records
   records[1] = data.header
   table.move(objects, 1, #objects, 2, records)
 
