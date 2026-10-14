@@ -2,7 +2,7 @@
 -- merge-to-master, timed from Luau: `merge` over record lists the size a mod's master and its
 -- plugin are, whole and by the part of a merge each pair is mostly made of (objects, cells and
 -- their references, landscape textures, dialogue), and `commands.merge` over such a pair as
--- files. Run by `jess run --package . --package-path .. bench/bench.luau [filter] [scratch]`, on
+-- files. Run by `jess run --package . --package-path .. bench/bench.jsl [filter] [scratch]`, on
 -- a release build. The command is timed only when a scratch folder is given to write the files
 -- into, which takes `--capability filesystem.read --capability filesystem.write`.
 --

@@ -1,6 +1,6 @@
 # merge-to-master benchmarks
 
-`bench/bench.luau` times the package through its public API: `merge` over record lists, and
+`bench/bench.jsl` times the package through its public API: `merge` over record lists, and
 `commands.merge` over plugin files. The lists are made by the bench, the same every run: a master
 and the plugin made on it, with objects of 23 types under ids of two words and a number, cells of
 references, path grids, landscape textures and landscapes whose texture indices are tes3conv's
@@ -29,7 +29,7 @@ the baseline's: a merge that does less, or anything else, fails instead of posti
 ```sh
 jess run --package jpk/merge-to-master --package-path jpk \
   --capability filesystem.read --capability filesystem.write \
-  jpk/merge-to-master/bench/bench.luau [filter] [scratch folder]
+  jpk/merge-to-master/bench/bench.jsl [filter] [scratch folder]
 ```
 
 Without a scratch folder the command isn't timed, and no capability is needed.
