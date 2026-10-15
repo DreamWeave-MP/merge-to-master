@@ -1,5 +1,4 @@
 --!strict
---!native
 --[[
 @merge-to-master: Greatness7's merge_to_master, over record lists.
 
@@ -116,6 +115,7 @@ local SharedKeys: { [string]: boolean } = {
 -- What an object is kept under. The keys are also what orders a walk over a file's objects,
 -- which the highest texture of a master whose indices aren't all numbers depends on: a shorter
 -- key for the shared families would be met in another order.
+@native
 local function objectKey(record: Record): string?
   local id = string.lower(tes3.editorId(record))
 
@@ -168,6 +168,7 @@ local function pushBack(group: Group, node: Node)
   group.tail = node
 end
 
+@native
 local function insertAfter(group: Group, after: Node, node: Node)
   node.prev = after
   node.next = after.next
@@ -182,6 +183,7 @@ local function insertAfter(group: Group, after: Node, node: Node)
 end
 
 -- merge_to_master's `DialogueGroup::insert_info`. Ids compare exactly, as it compares them.
+@native
 local function insertInfo(group: Group, info: Record)
   local id = tes3.string(info.id)
   local prevId = tes3.string(info.prevId)
@@ -218,6 +220,7 @@ end
 -- merge_to_master's `repair_links`: each INFO's links name its neighbours, except the first's
 -- previous and the last's next, which stay as they were. A changed INFO is copied, so lists
 -- that still hold the original see it unchanged.
+@native
 local function repairLinks(group: Group, ignored: { [Record]: boolean })
   local node = group.head
 
@@ -288,6 +291,7 @@ end
 
 -- merge_to_master's `collect_objects`. With `dialogueOnly`, only DIAL and INFO, as
 -- `from_path_dialogue_only` loads them.
+@native
 local function collect(records: Records, dialogueOnly: boolean?): PluginData
   local data = newData()
   local current: Group? = nil
@@ -336,6 +340,7 @@ local IndexLimit = 67108864
 
 --- A reference's master and index as one number, when each is a whole number from 0 up to
 --- `IndexLimit`. Written out, -0 isn't 0, so it has none: its reciprocal is below 0.
+@native
 local function packedIndices(reference: Table): number?
   local master, index = reference.mastIndex, reference.refrIndex
 
@@ -356,6 +361,7 @@ type Places = { [string | number]: number }
 --- master's at its master and index, or after them all. Two references are at the same place
 --- when their indices are written the same, which whole numbers are when they are equal: with
 --- `packed`, each pair is one number, and the answer is nil when a pair can't be.
+@native
 local function mergeReferences(
   master: { Table },
   plugin: { Table },
@@ -529,6 +535,7 @@ local function indexRemap(
   return newMasters, remap
 end
 
+@native
 local function nextReferenceIndex(master: PluginData): number
   local highest: number? = nil
 
@@ -545,6 +552,7 @@ local function nextReferenceIndex(master: PluginData): number
   return if highest then highest + 1 else 1
 end
 
+@native
 local function remapMasters(plugin: PluginData, master: PluginData, target: string)
   local pluginMasters = (plugin.header.masters or {}) :: { Master }
   local masterMasters = (master.header.masters or {}) :: { Master }
@@ -582,6 +590,7 @@ end
 
 -- A landscape's texture indices with `remap` applied. tes3conv spells the 16 by 16 grid as the
 -- base64 of its 256 little-endian words; rows of numbers are remapped as they are.
+@native
 local function remapIndices(data: Value, remap: { [number]: number }): Value
   if type(data) == 'string' then
     local words = bytes.fromBase64(data)
@@ -701,6 +710,7 @@ local function remapTextures(plugin: PluginData, master: PluginData, {summary, l
   end
 end
 
+@native
 local function removeIgnored(data: PluginData)
   -- Only another master's records are ignored. Without one, every object and INFO stays, and
   -- the topics alone are looked at.
@@ -739,6 +749,7 @@ end
 
 -- merge_to_master's `remove_deleted`. It logs each object it removes, and each reference removed
 -- because its object was: one marked deleted itself goes without a line.
+@native
 local function removeDeleted(data: PluginData, journal: Journal)
   -- The ids of the objects removed, lowercased; and for each id a reference has, spelled as it
   -- has it, whether that is one of them. A master places the same few ids over and over.
@@ -811,6 +822,7 @@ local function bytesLess(left: string, right: string): boolean return left < rig
 -- What places an object among the others: its type's place in tes3's order, the number a
 -- texture, an effect, or a skill sorts by, its id, and its rank among records of that id. A cell
 -- goes by its name and a path grid by its cell's, the path grid second.
+@native
 local function placing(record: Record): (number, number, string, number)
   local kind = record.type :: string
   local hint, id, rank = 0, tes3.string(record.id), 0
@@ -891,6 +903,7 @@ local OrderLimit, HintLimit, HintSpan, IdSpan = 64, 4194303, 4194304, 16777216
 -- number, the ids having been put in order among themselves first, and the numbers are sorted at
 -- once, objects with the same one staying in their order. One whose type has no place, or whose
 -- hint isn't a small whole number, has them all compared pair by pair instead.
+@native
 local function orderedObjects(data: PluginData): { Record }
   local capacity = #data.order
 
@@ -989,6 +1002,7 @@ end
 -- The order merge_to_master writes records in: tes3's type order, then each record's sort hint
 -- and id; cells and path grids by name, each path grid after its cell; journals first among
 -- topics, the rest by dialogue type and id.
+@native
 local function intoRecords(data: PluginData): Records
   local objects = orderedObjects(data)
   local records = table.create(#objects + 1) :: Records

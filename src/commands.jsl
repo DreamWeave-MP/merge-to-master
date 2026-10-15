@@ -1,5 +1,4 @@
 --!strict
---!native
 --[[
 @merge-to-master/commands: what merge_to_master does between reading its arguments and printing,
 over plugin files.

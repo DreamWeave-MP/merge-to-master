@@ -1,5 +1,4 @@
 --!strict
---!native
 --[[
 @merge-to-master/cli: merge_to_master's command line, over @merge-to-master/commands.
 
