@@ -101,9 +101,9 @@ local BackupFolder = 'merge_to_master'
 
 --- A plugin file's bytes, or the reason it can't be merged, raised.
 local function contents(path: string, role: string): buffer
-  if not jess.fs.isFile(path) then error(`the {role} '{path}' isn't a file`, 0) end
+  if not fs.isFile(path) then error(`the {role} '{path}' isn't a file`, 0) end
 
-  local bytes = jess.fs.readBuffer(path)
+  local bytes = fs.readFile(path)
 
   if not bytes then error(`the {role} '{path}' can't be read`, 0) end
 
@@ -119,9 +119,9 @@ end
 --- The file `name` in `folder`: the one spelled exactly so, else the first in the folder's
 --- listing that differs only in case.
 local function beside(folder: string, name: string): string?
-  local exact = jess.fs.join(folder, name)
+  local exact = fs.join(folder, name)
 
-  if jess.fs.isFile(exact) then return exact end
+  if fs.isFile(exact) then return exact end
 
   local lowered = string.lower(name)
 
@@ -129,9 +129,9 @@ local function beside(folder: string, name: string): string?
   for _, entry in fs.list(if folder == '' then '.' else folder) or {} do
     if string.lower(entry) ~= lowered then continue end
 
-    local path = jess.fs.join(folder, entry)
+    local path = fs.join(folder, entry)
 
-    if jess.fs.isFile(path) then return path end
+    if fs.isFile(path) then return path end
   end
 
   return nil
@@ -166,15 +166,15 @@ type Backup = { folder: string, path: string }
 --- merge_to_master's `backup`, as far as naming the file: where the master's backup goes, or
 --- why it has nowhere to go. Nothing is made or moved.
 local function backupPlace(master: string): (Backup?, string?)
-  local parent = jess.fs.parent(master) or ''
-  local stem, extension = split(jess.fs.fileName(master) or '')
+  local parent = fs.parent(master) or ''
+  local stem, extension = split(fs.fileName(master) or '')
 
   if not extension then return nil, `'{master}' has no extension to number a backup before` end
 
-  local folder = jess.fs.join(parent, 'backups', BackupFolder)
+  local folder = fs.join(parent, 'backups', BackupFolder)
   local highest: number? = nil
 
-  if jess.fs.isDir(folder) then
+  if fs.isDir(folder) then
     local entries, message = fs.list(folder)
 
     if not entries then return nil, message or `'{folder}' can't be listed` end
@@ -187,9 +187,9 @@ local function backupPlace(master: string): (Backup?, string?)
   end
 
   local number = if highest then highest + 1 else 0
-  local path = jess.fs.join(folder, string.format('%s.%03d.%s', stem, number, extension))
+  local path = fs.join(folder, string.format('%s.%03d.%s', stem, number, extension))
 
-  if jess.fs.exists(path) then return nil, `'{path}' is already there` end
+  if fs.exists(path) then return nil, `'{path}' is already there` end
 
   return { folder = folder, path = path }, nil
 end
@@ -246,8 +246,8 @@ function commands.merge(request: MergeRequest): MergeResult
 
   local plugin = tes3conv.records(core.open(contents(request.plugin, 'plugin')))
   local masterBytes = contents(request.master, 'master')
-  local masterName = jess.fs.fileName(request.master) or request.master
-  local folder = jess.fs.parent(request.master) or ''
+  local masterName = fs.fileName(request.master) or request.master
+  local folder = fs.parent(request.master) or ''
   local others: { [string]: Records } = {}
 
   for _, entry in ((plugin[1].masters or {}) :: unknown) :: { { string | number } } do

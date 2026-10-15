@@ -32,6 +32,7 @@ merge_to_master exits 1. Messages go to standard error as `merge-to-master: <mes
 ]]
 
 local commands = require '@merge-to-master/commands'
+local fs = require '@dream/fs'
 local process = require '@dream/process'
 
 export type Command = {
@@ -189,7 +190,7 @@ local function parse(argv: { string }, folder: string?): (Command?, string?)
     master = positional[2],
     removeDeleted = given['remove-deleted'],
     overwrite = given['overwrite'],
-    log = if folder then jess.fs.join(folder, LogName) else `./{LogName}`,
+    log = if folder then fs.join(folder, LogName) else `./{LogName}`,
   }
 
   return { action = 'merge' :: 'merge', request = request }, nil
@@ -259,7 +260,7 @@ local function run(argv: { string }, folder: string?): number
   for _, argument in { { '<PLUGIN>', request.plugin }, { '<MASTER>', request.master } } do
     local name, path = argument[1], argument[2]
 
-    if not jess.fs.isFile(path) then
+    if not fs.isFile(path) then
       return usage(`invalid value '{path}' for '{name}': Invalid file path: {path}`)
     end
   end

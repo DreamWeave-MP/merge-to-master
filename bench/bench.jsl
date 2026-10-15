@@ -10,6 +10,7 @@
 -- result is hashed whole, before the timing and after it, and has to come to the hash written
 -- here: a merge that stopped doing the work, or does other work, fails instead of posting a time.
 local bytes = require '@dream/bytes'
+local fs = require '@dream/fs'
 local mergeToMaster = require '@merge-to-master'
 local records = require '@tes3conv/records'
 
@@ -658,8 +659,9 @@ if scratch and scratch ~= '' then
   local function write(name: string, list: Records): string
     local file = tes3conv.plugin(list)
     file:updateRecordCount()
-    local path = jess.fs.join(scratch, name)
-    jess.fs.write(path, file:save(), { backup = false })
+    local path = fs.join(scratch, name)
+    local done, problem = fs.writeFile(path, file:save(), { atomic = true, createParents = true })
+    if not done then error(problem, 0) end
     return path
   end
 

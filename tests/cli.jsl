@@ -6,6 +6,7 @@
 -- suite's own standard error.
 local cli = require '@merge-to-master/cli'
 local commands = require '@merge-to-master/commands'
+local fs = require '@dream/fs'
 local support = require './support'
 local test = require '@jess/test'
 
@@ -176,7 +177,7 @@ suite.describe('parse', function()
       request = {
         plugin = 'Plugin.esp',
         master = 'Master.esm',
-        log = jess.fs.join('work', 'merge_to_master.log'),
+        log = fs.join('work', 'merge_to_master.log'),
       },
     }
   end)
@@ -296,28 +297,28 @@ suite.describe('run', function()
   suite.it('returns 8 for an argument that isn\'t a file, and writes nothing', function()
     local folder = support.folder 'cli-not-files'
     local plugin, master = support.pair(folder)
-    local missing = jess.fs.join(folder, 'Nothing.esp')
+    local missing = fs.join(folder, 'Nothing.esp')
     local before = support.bytes(master)
 
     expect(cli.run({ missing, master }, folder)).toBe(8)
     expect(cli.run({ plugin, folder }, folder)).toBe(8)
-    expect(cli.run({ plugin, jess.fs.join(folder, 'Nothing.esm'), '-o' }, folder)).toBe(8)
+    expect(cli.run({ plugin, fs.join(folder, 'Nothing.esm'), '-o' }, folder)).toBe(8)
     expect(support.bytes(master) == before).toBe(true)
-    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
-    expect(jess.fs.exists(jess.fs.join(folder, 'merge_to_master.log'))).toBe(false)
+    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
+    expect(fs.exists(fs.join(folder, 'merge_to_master.log'))).toBe(false)
   end)
 
   suite.it('merges, backs the master up, writes the log, and returns 0', function()
     local folder = support.folder 'cli-merge'
     local plugin, master = support.pair(folder)
     local before = support.bytes(master)
-    local backup = jess.fs.join(folder, 'backups', 'merge_to_master', 'Master.000.esm')
+    local backup = fs.join(folder, 'backups', 'merge_to_master', 'Master.000.esm')
 
     expect(cli.run({ plugin, master }, folder)).toBe(0)
     expect(support.bytes(backup) == before).toBe(true)
     expect(support.chain(support.read(master))).toEqual { 'I1<|I3>', 'I3<I1|I2>', 'I2<I3|>' }
 
-    local log = support.bytes(jess.fs.join(folder, 'merge_to_master.log'))
+    local log = support.bytes(fs.join(folder, 'merge_to_master.log'))
     expect(string.sub(log, 1, 19)).toBe 'Merging plugins...\n'
     expect(string.sub(log, -11)).toBe '\nFinished!\n'
     expect(log).toContain(`Creating backup file: {backup}\n`)
@@ -338,7 +339,7 @@ suite.describe('run', function()
 
     expect(cli.run({ '-ro', plugin, master }, folder)).toBe(0)
     expect(support.labels(support.read(master))).toEqual { 'Static:Tree' }
-    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
   end)
 
   suite.it('returns 9 for a master of the plugin\'s that isn\'t there, the master as it was', function()
@@ -353,14 +354,15 @@ suite.describe('run', function()
 
     expect(cli.run({ plugin, master }, folder)).toBe(9)
     expect(support.bytes(master) == before).toBe(true)
-    expect(jess.fs.isDir(jess.fs.join(folder, 'backups'))).toBe(false)
+    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
   end)
 
   suite.it('returns 9 for a file that isn\'t a plugin', function()
     local folder = support.folder 'cli-not-a-plugin'
     local _, master = support.pair(folder)
-    local text = jess.fs.join(folder, 'Notes.esp')
-    jess.fs.write(text, 'not a plugin at all', { backup = false })
+    local text = fs.join(folder, 'Notes.esp')
+    local done, problem = fs.writeFile(text, 'not a plugin at all', { atomic = true, createParents = true })
+    if not done then error(problem, 0) end
     local before = support.bytes(master)
 
     expect(cli.run({ text, master }, folder)).toBe(9)
