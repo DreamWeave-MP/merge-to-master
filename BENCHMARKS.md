@@ -124,3 +124,48 @@ cell's renumbered references ahead measured as nothing; neither is in. Keeping t
 families that share their ids under the bare id, without a prefix joined to it, was worth a
 twentieth of the objects row and was taken back: the keys order the walk that finds the highest
 texture of a master whose indices aren't all numbers, and that order is the baseline's to keep.
+
+## Which modules are native, and why
+
+Jess compiles to machine code only what is marked (`--!native` on a module, `@native` on one
+function), and every load pays for what is marked. A module carries `--!native` when a row below
+spends its time there and the module is small (12 KB or less); a larger module carries `@native`
+on the functions the row spends its time in, and nothing else.
+
+Measured 2026-10-15 with `jess 0.1.0`, the verified release build of jess `07c38cb` on l3i
+2.0.3, on the i7-10870H, the one-minute load 1.32 and 1.27 at the start of the two
+sessions. In each session the bench ran alternately on this package and on a copy of it with
+every module marked, three fresh runs of `bench/bench.jsl` each, every run's row the median of
+its batches; a column is the median of the three, and a ratio is against the all-marked runs of
+the same session. Which functions a row spends its time in comes from `jess run --profile` of
+that row alone, unmarked. The load cost is a fresh `jess run --package <this package>
+--package-path jpk` of a script that only requires `@merge-to-master`, the two sides alternating, the
+median of five each after one warm-up.
+
+| Requiring `@merge-to-master` | All marked | This state |
+| --- | ---: | ---: |
+| Unmarked | 0.054 s | 0.049 s |
+| Final | 0.054 s | 0.051 s |
+
+| Row | All marked (ms) | Unmarked / all marked | Final (ms) | Final / all marked |
+| --- | ---: | ---: | ---: | ---: |
+| a plugin of 2286 records into a master of 16142 | 16.95 | **1.663×** | 17.40 | 1.027× |
+| the same, removing the deleted, with the log | 24.40 | **1.585×** | 24.96 | 1.023× |
+| objects: 4000 into 24000 | 24.88 | **1.589×** | 25.08 | 1.008× |
+| cells: 192 of 96 references into 256 of 128 | 10.09 | **1.800×** | 9.873 | 0.978× |
+| cells, removing the deleted: 192 of 96 references into 256 of 128 | 15.01 | **1.774×** | 15.21 | 1.014× |
+| landscape textures: 64 and 512 landscapes into 200 and 1024 | 3.252 | **1.994×** | 3.341 | 1.027× |
+| dialogue: 500 topics into 800 of 16 INFOs | 10.07 | **1.391×** | 9.991 | 0.992× |
+| dialogue after that of another master: 325 topics into 400 of 12 INFOs | 5.907 | **1.514×** | 6.165 | 1.044× |
+| commands.merge, a dry run: files of 1086 records into 5792 | 69.76 | 1.050× | 68.51 | 0.982× |
+
+What carries the directive (every function here is one a row spends its time in, unmarked):
+
+- `init`, by function: `objectKey`, `insertAfter`, `insertInfo`, `repairLinks`, `collect`,
+  `packedIndices`, `mergeReferences`, `nextReferenceIndex`, `remapMasters`, `remapIndices`,
+  `removeIgnored`, `removeDeleted`, `placing`, `orderedObjects`, `intoRecords`.
+- Unmarked: `cli`, `commands`, `main`.
+
+These are the merge itself: placing objects and dialogue, remapping masters and references,
+repairing INFO links. Unmarked, eight of the nine rows ran more than 5% slower; with these marked,
+none is, and requiring `@merge-to-master` costs 3 ms less than all marked.
