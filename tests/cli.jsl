@@ -304,8 +304,8 @@ suite.describe('run', function()
     expect(cli.run({ plugin, folder }, folder)).toBe(8)
     expect(cli.run({ plugin, fs.join(folder, 'Nothing.esm'), '-o' }, folder)).toBe(8)
     expect(support.bytes(master) == before).toBe(true)
-    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
-    expect(fs.exists(fs.join(folder, 'merge_to_master.log'))).toBe(false)
+    expect((fs.isDir(fs.join(folder, 'backups')))).toBe(false)
+    expect((fs.exists(fs.join(folder, 'merge_to_master.log')))).toBe(false)
   end)
 
   suite.it('merges, backs the master up, writes the log, and returns 0', function()
@@ -339,7 +339,7 @@ suite.describe('run', function()
 
     expect(cli.run({ '-ro', plugin, master }, folder)).toBe(0)
     expect(support.labels(support.read(master))).toEqual { 'Static:Tree' }
-    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
+    expect((fs.isDir(fs.join(folder, 'backups')))).toBe(false)
   end)
 
   suite.it('returns 9 for a master of the plugin\'s that isn\'t there, the master as it was', function()
@@ -354,7 +354,7 @@ suite.describe('run', function()
 
     expect(cli.run({ plugin, master }, folder)).toBe(9)
     expect(support.bytes(master) == before).toBe(true)
-    expect(fs.isDir(fs.join(folder, 'backups'))).toBe(false)
+    expect((fs.isDir(fs.join(folder, 'backups')))).toBe(false)
   end)
 
   suite.it('returns 9 for a file that isn\'t a plugin', function()
