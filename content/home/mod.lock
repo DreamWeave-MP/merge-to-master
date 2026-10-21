@@ -1,0 +1,52 @@
+{
+  "schema_version": "3",
+  "document": "lock",
+  "project": "25a14f79-a94a-495c-80d6-d1e834c924c2",
+  "note": "Written by CI when a release tag is pushed: what each published release's archive contains. Do not edit.",
+  "releases": [
+    {
+      "version": "0.1.0",
+      "locked_from": "b6f736d85ee2deea3165e011bc59df06bbab4d46",
+      "artifacts": [
+        {
+          "id": "jpk",
+          "format": "jpk",
+          "filename": "org.dreamweave.merge-to-master-0.1.0.jpk",
+          "media_type": "application/vnd.jess.jpk",
+          "size": 54070,
+          "digests": {
+            "sha256": "4c3896fbbcbd116d971514abe917dd9d4adc7698441698c09a341d4d117ad5aa"
+          },
+          "jess": {
+            "package": "org.dreamweave.merge-to-master",
+            "jess_api": "1",
+            "content_digest": "bc64ecc2278868aa4cd909bfa3f66906dfda5d6b0b65cb0fa23df75e5ed7e92a",
+            "dependencies": {
+              "org.dreamweave.esm": "0.1",
+              "org.dreamweave.tes3conv": "0.1"
+            }
+          }
+        }
+      ],
+      "runtimes": {},
+      "platforms": [],
+      "provides": [],
+      "relationships": [],
+      "components": [
+        {
+          "id": "main",
+          "name": "merge-to-master",
+          "path": ".",
+          "required": true,
+          "default": true,
+          "requires": [],
+          "conflicts": [],
+          "suggested_with": []
+        }
+      ],
+      "groups": [],
+      "extensions": {},
+      "critical_extensions": []
+    }
+  ]
+}
