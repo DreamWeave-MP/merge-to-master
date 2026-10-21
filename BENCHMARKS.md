@@ -18,7 +18,7 @@ has under another index, and INFOs put into the master's chains in each way an I
   plugin's has some of them too.
 - *commands.merge, a dry run* writes a plugin of 1,086 records and a master of 5,792 (184 KB and
   808 KB) into the scratch folder once, and times the command over the files: both read through
-  `@tes3` and `@tes3conv`, merged, and the result written as a plugin in memory.
+  `@esm` and `@tes3conv`, merged, and the result written as a plugin in memory.
 
 Each workload is warmed up, sized to a batch of about a tenth of a second, and reported as the
 median of seven batches, with a full collection between them. Before the batches and after them
@@ -39,7 +39,7 @@ Without a scratch folder the command isn't timed, and no capability is needed.
 - Machine: Intel Core i7-10870H @ 2.20 GHz, 16 threads, shared with other work while this ran.
 - Date: 2026-10-12.
 - Binary: the verified release build of Jess 0.1.0 on l3i 2.0.1 (Luau 0.742), the same one for
-  both sides, with the same `@tes3` and `@tes3conv` beside both.
+  both sides, with the same `@esm` and `@tes3conv` beside both.
 - Base: `d345af1`, the package before the move, with this bench. Head: `3b8741a`, the move and
   the one fix after it, which costs nothing.
 - Protocol: the whole bench run against base, then head, seven times over, back to back under one
@@ -112,7 +112,7 @@ flags only of objects that have any. And a file's cells and textures are listed 
 collected, so the passes over references and texture indices no longer walk every object to find
 them.
 
-What moved least: the command. Reading the two files and writing the merged one is `@tes3`'s and
+What moved least: the command. Reading the two files and writing the merged one is `@esm`'s and
 `@tes3conv`'s work. Timed apart from the command over the same files, `merge` was 12.3 ms of its
 72 before and is 6.3 ms of its 67, a sixth then and a tenth now: under a tenth is what the row
 can have gained, and the 1.09x of this run is that. The texture remap itself is

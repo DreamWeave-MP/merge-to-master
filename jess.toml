@@ -15,7 +15,7 @@ tests = [
 ]
 
 [dependencies]
-"org.dreamweave.tes3" = "0.1"
+"org.dreamweave.esm" = "0.1"
 "org.dreamweave.tes3conv" = "0.1"
 
 [modules]
@@ -30,7 +30,7 @@ tests = [
 
 [[layer]]
 id = "merge-to-master.core"
-requires = ["tes3.core", "tes3conv.core"]
+requires = ["esm.core", "tes3conv.core"]
 exports = ["@merge-to-master", "@merge-to-master/commands", "@merge-to-master/cli"]
 
 # The command line: `src/main.jsl` hands its arguments to `@merge-to-master/cli`. A merge checks

@@ -36,7 +36,7 @@ map's. A file's records are read as @tes3conv reads them, sorted as tes3conv wri
 that is the order: the same for every file holding those records.
 ]]
 
-local core = require '@tes3'
+local core = require '@esm'
 local fs = require '@dream/fs'
 local mergeToMaster = require '@merge-to-master'
 local tes3 = require '@tes3conv/records'
